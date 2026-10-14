@@ -7,6 +7,7 @@ import { openPdfPresentation } from './src/pdf-presentation.js';
 import { PresentationController } from './src/presentation.js';
 import { createMobileRemoteClient } from './src/mobile-remote-client.js';
 import { SwipeRecognizer } from './src/gesture-engine.js';
+import { createCanvaExtensionBridge } from './extension/shared/page-bridge.js';
 
 const $ = (id) => document.getElementById(id);
 function isLocalNetworkHost(hostname) {
@@ -147,6 +148,7 @@ const slides = [
 ];
 
 const presentation = new PresentationController(slides);
+const canvaExtensionBridge = createCanvaExtensionBridge();
 let mobileRemoteClient = null;
 let pairingReturnFocus = null;
 let pendingPairingInvite = null;
@@ -154,12 +156,17 @@ let remoteActive = false;
 let remoteStarting = false;
 let remoteAuthenticated = false;
 let remoteGeneration = 0;
+// Keep stop requests distinct across replacements and coalesce duplicates for one session.
+let activeRemoteSessionKey = 0;
 let remoteStopPromise = null;
+const remoteStopRequests = new Map();
 let cloudRemoteSession = null;
 let closingMobileRemote = false;
 let pairedPhones = [];
 let pairingInviteExpired = false;
 let pageIsHiding = false;
+let canvaTarget = { connected: false, ready: false };
+let phoneRemoteTarget = null;
 const savedSettings = loadSettings();
 const state = {
   mode: 'idle',
@@ -479,6 +486,27 @@ function syncPdfFullscreen() {
   if (state.pdf) void renderPdfPage(presentation.getSnapshot().index);
 }
 
+function renderTargetStatus() {
+  const target = remoteActive ? phoneRemoteTarget : canvaTarget.connected ? 'canva' : 'local';
+  if (target === 'canva') {
+    const status = canvaTarget.connected
+      ? canvaTarget.ready ? 'Connected' : 'Not ready'
+      : 'Disconnected';
+    setText(elements.targetStatus, `Canva presentation · ${status}`);
+    return;
+  }
+  setText(elements.targetStatus, state.pdf ? 'Imported PDF · browser demo' : 'Sample deck · browser demo');
+}
+
+function updateCanvaTarget(nextState) {
+  canvaTarget = {
+    connected: nextState?.connected === true,
+    ready: nextState?.connected === true && nextState?.ready === true,
+  };
+  renderTargetStatus();
+  if (remoteActive && phoneRemoteTarget === 'canva') publishRemoteState();
+}
+
 function renderSourceUi() {
   const pdfActive = Boolean(state.pdf);
   show(elements.connectPhone, true);
@@ -494,7 +522,7 @@ function renderSourceUi() {
   setText(elements.deckHeading, pdfActive ? state.pdfName : cloudExperience ? 'Sample deck' : 'Field notes on presence');
   setText(elements.deckEyebrow, pdfActive ? 'YOUR PDF' : 'SAMPLE DECK');
   setText(elements.deckFormatLabel, pdfActive ? 'PDF · Local file' : 'Browser · Sample deck');
-  setText(elements.targetStatus, pdfActive ? 'Imported PDF · browser demo' : 'Sample deck · browser demo');
+  renderTargetStatus();
   if (elements.deckVisual) {
     elements.deckVisual.dataset.source = pdfActive ? 'pdf' : 'sample';
     if (pdfActive) {
@@ -596,7 +624,13 @@ export function announceAction(action, source = 'manual') {
   return true;
 }
 
-function remoteSnapshot() {
+function remoteSnapshot(target = remoteActive ? phoneRemoteTarget : canvaTarget.connected ? 'canva' : 'local') {
+  if (target === 'canva') {
+    return {
+      target: 'canva', ready: canvaTarget.connected && canvaTarget.ready,
+      index: null, total: null, busy: false,
+    };
+  }
   const { index, total } = presentation.getSnapshot();
   return { index, total, busy: state.pdfRendering };
 }
@@ -617,7 +651,14 @@ export function goToSlide(index, source = 'manual') {
 }
 
 function handleRemoteCommand(command) {
-  if (!command || typeof command !== 'object' || Array.isArray(command) || state.pdfRendering) return false;
+  if (!command || typeof command !== 'object' || Array.isArray(command)) return false;
+  if (phoneRemoteTarget === 'canva') {
+    if (Object.keys(command).join(',') !== 'action'
+      || (command.action !== 'previous' && command.action !== 'next')
+      || !canvaTarget.connected || !canvaTarget.ready) return false;
+    return canvaExtensionBridge.sendNavigation(command.action);
+  }
+  if (state.pdfRendering) return false;
   if (command.action === 'goTo') {
     if (Object.keys(command).sort().join(',') !== 'action,index') return false;
     return goToSlide(command.index, 'remote');
@@ -760,6 +801,7 @@ function resetPairingUi() {
   remoteActive = false;
   remoteStarting = false;
   remoteAuthenticated = false;
+  phoneRemoteTarget = null;
   pairingInviteExpired = false;
   clearPairingMaterial();
   show(elements.newPairingLink, false);
@@ -767,6 +809,7 @@ function resetPairingUi() {
   renderPairedPhones([]);
   setPairingStatus('Disconnected');
   updatePairingStartButton();
+  renderTargetStatus();
 }
 
 function restorePairingFocus() {
@@ -867,7 +910,7 @@ function handleMobileRemoteConnection(event, generation) {
   }
   if (event.type === 'closed' || event.type === 'sessionEnded') {
     if (!remoteActive) return;
-    void stopMobileRemote({ force: true });
+    void stopMobileRemote({ force: true, stopSession: !cloudExperience });
   }
 }
 
@@ -879,7 +922,9 @@ async function startMobileRemote() {
     setPairingStatus('Choose a private network interface first.');
     return;
   }
+  const target = canvaTarget.connected ? 'canva' : 'local';
   const generation = ++remoteGeneration;
+  activeRemoteSessionKey += 1;
   remoteStarting = true;
   pairedPhones = [];
   pairingInviteExpired = false;
@@ -890,13 +935,19 @@ async function startMobileRemote() {
   setPairingStatus('Starting the phone connection…');
   let serverStarted = false;
   try {
+    while (remoteStopPromise) {
+      const pendingStop = remoteStopPromise;
+      await pendingStop;
+      if (generation !== remoteGeneration) return;
+    }
+    if (generation !== remoteGeneration) return;
     const result = await requestMobileRemote('start', {
       method: 'POST',
-      body: { address, state: remoteSnapshot() },
+      body: { address, state: remoteSnapshot(target) },
     });
     serverStarted = true;
     if (generation !== remoteGeneration) {
-      void requestMobileRemote('stop', { method: 'POST', body: {}, keepalive: pageIsHiding }).catch(() => {});
+      // stopMobileRemote already queued cleanup when it invalidated this start.
       return;
     }
     if (typeof result.hostCredential !== 'string' || !result.hostCredential
@@ -907,6 +958,8 @@ async function startMobileRemote() {
     pairingInviteExpired = false;
     remoteStarting = false;
     remoteActive = true;
+    phoneRemoteTarget = target;
+    renderTargetStatus();
     show(elements.disconnectPhone, true);
     setPairingStatus('Waiting for the presenter connection…');
     updatePairingStartButton();
@@ -915,17 +968,15 @@ async function startMobileRemote() {
       onConnection: (event) => handleMobileRemoteConnection(event, generation),
     });
   } catch (error) {
-    if (serverStarted) {
-      closingMobileRemote = true;
-      mobileRemoteClient?.close();
-      mobileRemoteClient = null;
-      closingMobileRemote = false;
-      void requestMobileRemote('stop', { method: 'POST', body: {}, keepalive: pageIsHiding }).catch(() => {});
-    }
     if (generation !== remoteGeneration) return;
+    if (serverStarted) {
+      void stopMobileRemote({ force: true, keepalive: pageIsHiding });
+    }
     remoteStarting = false;
     remoteActive = false;
     remoteAuthenticated = false;
+    phoneRemoteTarget = null;
+    renderTargetStatus();
     clearPairingMaterial();
     show(elements.newPairingLink, false);
     show(elements.disconnectPhone, false);
@@ -938,6 +989,7 @@ async function startMobileRemote() {
 async function startCloudMobileRemote() {
   if (!cloudExperience || remoteActive || remoteStarting) return;
   const generation = ++remoteGeneration;
+  activeRemoteSessionKey += 1;
   remoteStarting = true;
   updatePairingStartButton();
   show(elements.newPairingLink, false);
@@ -1022,9 +1074,8 @@ async function renewPairingInvite() {
   }
 }
 
-async function stopMobileRemote({ keepalive = false, force = false } = {}) {
-  if (remoteStopPromise) return remoteStopPromise;
-  const shouldPostStop = force || remoteActive || remoteStarting;
+async function stopMobileRemote({ keepalive = false, force = false, stopSession = true } = {}) {
+  const shouldPostStop = stopSession && (force || remoteActive || remoteStarting);
   ++remoteGeneration;
   closingMobileRemote = true;
   const client = mobileRemoteClient;
@@ -1033,17 +1084,28 @@ async function stopMobileRemote({ keepalive = false, force = false } = {}) {
   closingMobileRemote = false;
   if (elements.pairingInterface) elements.pairingInterface.disabled = false;
   resetPairingUi();
-  if (!shouldPostStop) return;
   const sessionToStop = cloudRemoteSession;
   cloudRemoteSession = null;
-  remoteStopPromise = (cloudExperience
-    ? sessionToStop
-      ? requestCloudRemote('stop', { body: sessionToStop, keepalive })
-      : Promise.resolve()
-    : requestMobileRemote('stop', { method: 'POST', body: {}, keepalive }))
+  const stopSessionKey = `${cloudExperience ? 'cloud' : 'local'}:${activeRemoteSessionKey}`;
+  const existingStopPromise = remoteStopRequests.get(stopSessionKey);
+  if (!shouldPostStop || existingStopPromise) return existingStopPromise;
+
+  const previousStopPromise = remoteStopPromise;
+  const stopRequest = (previousStopPromise ?? Promise.resolve())
     .catch(() => {})
-    .finally(() => { remoteStopPromise = null; });
-  return remoteStopPromise;
+    .then(() => (cloudExperience
+      ? sessionToStop
+        ? requestCloudRemote('stop', { body: sessionToStop, keepalive })
+        : Promise.resolve()
+      : requestMobileRemote('stop', { method: 'POST', body: {}, keepalive })))
+    .catch(() => {});
+  remoteStopPromise = stopRequest;
+  remoteStopRequests.set(stopSessionKey, stopRequest);
+  stopRequest.then(() => {
+    if (remoteStopRequests.get(stopSessionKey) === stopRequest) remoteStopRequests.delete(stopSessionKey);
+    if (remoteStopPromise === stopRequest) remoteStopPromise = null;
+  });
+  return stopRequest;
 }
 
 async function copyPairingUrl() {
@@ -1541,6 +1603,7 @@ function bindEvents() {
   window.addEventListener('pagehide', () => {
     pageIsHiding = true;
     const remoteStop = stopMobileRemote({ keepalive: true, force: true });
+    canvaExtensionBridge.close();
     clearFullscreenToolbarTimer();
     state.pdfImportToken += 1;
     state.pdfRenderToken += 1;
@@ -1574,6 +1637,9 @@ if (elements.reverseMapping) {
   elements.reverseMapping.setAttribute('aria-pressed', String(state.reverseMapping));
   setText(elements.reverseMapping, state.reverseMapping ? 'Reverse swipes: on' : 'Reverse swipes: off');
 }
+
+canvaExtensionBridge.subscribe(updateCanvaTarget);
+void canvaExtensionBridge.requestStatus().then(updateCanvaTarget);
 
 bindEvents();
 if (cloudExperience) {

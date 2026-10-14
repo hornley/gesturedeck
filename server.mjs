@@ -4,10 +4,15 @@ import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attachMobileRemote, listPrivateInterfaces } from './src/mobile-remote-server.js';
+import { DEFAULT_CONTROLLER_PORT } from './extension/shared/protocol.js';
 import { attachCloudRemote } from './src/cloud-remote-server.js';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
-const publicRootFiles = new Set(['index.html', 'workspace.html', 'app.js', 'styles.css', 'home.css', 'mobile-remote.html', 'mobile-remote.css', 'favicon.svg']);
+const publicRootFiles = new Set([
+  'index.html', 'workspace.html', 'app.js', 'styles.css', 'home.css',
+  'mobile-remote.html', 'mobile-remote.css', 'favicon.svg',
+  'extension/shared/protocol.js', 'extension/shared/page-bridge.js',
+]);
 const publicDirectories = [
   'src/',
   'assets/',
@@ -139,7 +144,7 @@ export function createAppServer({ root = projectRoot, host = '0.0.0.0' } = {}) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const host = resolveListenHost(process.env.HOST);
-  const port = Number(process.env.PORT ?? 5173);
+  const port = Number(process.env.PORT ?? DEFAULT_CONTROLLER_PORT);
   const server = createAppServer({ host });
   server.listen(port, host, () => {
     const presenterUrls = ['127.0.0.1', ...listPrivateInterfaces()].map((address) => `http://${address}:${port}`);

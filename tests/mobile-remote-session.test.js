@@ -202,6 +202,44 @@ test('every paired phone can navigate and the presenter can remove one phone wit
   assert.equal(harness.stopped.length, 0);
 });
 
+test('pairs a Canva target without inventing slide position', () => {
+  const harness = createHarness({ state: {
+    target: 'canva', ready: true, index: null, total: null, busy: false,
+  } });
+  const { phoneSocket } = pair(harness);
+
+  assert.deepEqual(phoneSocket.messages[0], {
+    type: 'paired',
+    credential: 'phone-credential',
+    phoneId: 'phone-id-one',
+    label: 'Phone 1',
+    deviceType: 'phone',
+    state: { target: 'canva', ready: true, index: null, total: null, busy: false },
+  });
+  harness.session.handlePhoneMessage(phoneSocket, {
+    type: 'command', id: 'canva-go-to', action: 'goTo', index: 2,
+  });
+  assert.deepEqual(phoneSocket.messages.at(-1), {
+    type: 'commandRejected', reason: 'invalid-command',
+  });
+});
+
+test('rejects Canva navigation until the selected target is ready', () => {
+  const harness = createHarness({ state: {
+    target: 'canva', ready: false, index: null, total: null, busy: false,
+  } });
+  const { phoneSocket } = pair(harness);
+  const command = { type: 'command', id: 'canva-not-ready', action: 'next' };
+  const before = harness.presenterSocket.messages.length;
+
+  harness.session.handlePhoneMessage(phoneSocket, command);
+
+  assert.equal(harness.presenterSocket.messages.length, before);
+  assert.deepEqual(phoneSocket.messages.at(-1), {
+    type: 'commandAck', id: command.id, accepted: false,
+  });
+});
+
 test('invalid pairing attempts lock the invite until renewal, which resets attempts', () => {
   const harness = createHarness({
     maxPairAttempts: 5,

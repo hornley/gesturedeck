@@ -140,6 +140,23 @@ function upgrade(server, route, { host, origin, peer }) {
   return socket;
 }
 
+test('phone listener accepts a Canva target with unknown slide position', async () => {
+  const main = http.createServer();
+  main.address = () => ({ port: 5173 });
+  const remote = attachMobileRemote(main, {
+    interfaces, createListener: fakeListener, createQrDataUrl: () => 'data:qr',
+  });
+  const state = { target: 'canva', ready: true, index: null, total: null, busy: false };
+
+  try {
+    const result = await fakeRequest(main, '/api/mobile-remote/start', {
+      body: JSON.stringify({ address: '192.168.1.12', state }),
+    });
+    assert.equal(result.status, 200);
+    await fakeRequest(main, '/api/mobile-remote/stop');
+  } finally { await remote.close(); }
+});
+
 test('in-process API rejects malformed and unauthorized mutations without opening a listener', async () => {
   const main = http.createServer();
   main.address = () => ({ port: 5173 });
