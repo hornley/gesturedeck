@@ -180,6 +180,17 @@ test('popup keeps phone pairing disabled and guidance visible until Canva is rea
   assert.equal(popup.elements.get('phone-pairing-hint').hidden, false);
 });
 
+test('popup keeps phone pairing disabled and guidance visible while Canva presentation mode is not ready', async () => {
+  const popup = await createPopupHarness();
+  popup.requests.find(({ message }) => message.type === 'popup-status')
+    .resolve({ connected: true, ready: false });
+  await waitFor(() => popup.elements.get('status').textContent === 'Canva tab selected, but presentation mode is not ready.');
+
+  assert.equal(popup.elements.get('show-phone-pairing').disabled, true);
+  assert.equal(popup.elements.get('phone-pairing-hint').hidden, false);
+  assert.equal(popup.elements.get('status').textContent, 'Canva tab selected, but presentation mode is not ready.');
+});
+
 test('popup opens hosted phone pairing for a ready Canva target', async () => {
   const popup = await createPopupHarness();
   popup.requests.find(({ message }) => message.type === 'popup-status')
