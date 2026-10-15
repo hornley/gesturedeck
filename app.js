@@ -997,7 +997,9 @@ async function startCloudMobileRemote() {
   setPairingStatus('Starting the phone connection…');
   let startedSession;
   try {
-    const result = await requestCloudRemote('start', { body: { state: remoteSnapshot() } });
+    const initialState = remoteSnapshot();
+    const initialPhoneRemoteTarget = initialState.target === 'canva' ? 'canva' : 'local';
+    const result = await requestCloudRemote('start', { body: { state: initialState } });
     if (typeof result.sessionId !== 'string' || !/^[A-Za-z0-9_-]{16}$/.test(result.sessionId)
       || typeof result.hostCredential !== 'string' || !result.hostCredential) {
       throw new Error('The pairing service returned incomplete connection details.');
@@ -1013,7 +1015,9 @@ async function startCloudMobileRemote() {
     cloudRemoteSession = startedSession;
     pendingPairingInvite = { qrDataUrl: result.qrDataUrl, fallbackUrl: result.fallbackUrl };
     remoteStarting = false;
+    phoneRemoteTarget = initialPhoneRemoteTarget;
     remoteActive = true;
+    renderTargetStatus();
     show(elements.disconnectPhone, true);
     updatePairingStartButton();
     setPairingStatus('Waiting for the presenter connection…');
@@ -1028,10 +1032,22 @@ async function startCloudMobileRemote() {
       void requestCloudRemote('stop', { body: startedSession, keepalive: pageIsHiding }).catch(() => {});
     }
     if (generation !== remoteGeneration) return;
+    closingMobileRemote = true;
+    const failedClient = mobileRemoteClient;
+    mobileRemoteClient = null;
+    try {
+      failedClient?.close();
+    } catch {
+      // Keep the startup error as the reported failure.
+    } finally {
+      closingMobileRemote = false;
+    }
     remoteStarting = false;
     remoteActive = false;
     remoteAuthenticated = false;
     cloudRemoteSession = null;
+    phoneRemoteTarget = null;
+    renderTargetStatus();
     clearPairingMaterial();
     show(elements.newPairingLink, false);
     show(elements.disconnectPhone, false);
