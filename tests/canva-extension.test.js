@@ -137,17 +137,22 @@ async function waitFor(predicate) {
 
 async function createPopupHarness() {
   const source = await readFile(new URL('../extension/popup/popup.js', import.meta.url), 'utf8');
-  const elements = new Map(['status', 'connect', 'disconnect'].map((id) => [id, {
+  const elements = new Map(['status', 'connect', 'disconnect', 'show-phone-pairing', 'phone-pairing-hint'].map((id) => [id, {
     hidden: false,
+    disabled: id === 'show-phone-pairing',
     textContent: '',
     listeners: new Map(),
     addEventListener(type, callback) { this.listeners.set(type, callback); },
   }]));
   const requests = [];
+  const openedTabs = [];
   const context = {
     document: { getElementById: (id) => elements.get(id) },
     chrome: {
-      tabs: { async query() { return [{ id: 7 }]; } },
+      tabs: {
+        async query() { return [{ id: 7 }]; },
+        async create(details) { openedTabs.push(details); },
+      },
       runtime: {
         sendMessage(message) {
           const response = deferred();
@@ -159,8 +164,48 @@ async function createPopupHarness() {
   };
   context.globalThis = context;
   runInNewContext(source, context);
-  return { elements, requests };
+  return { elements, requests, openedTabs, context };
 }
+
+test('popup keeps phone pairing disabled and guidance visible until Canva is ready', async () => {
+  const popup = await createPopupHarness();
+  assert.equal(popup.elements.get('show-phone-pairing').disabled, true);
+  assert.equal(popup.elements.get('phone-pairing-hint').hidden, false);
+
+  popup.requests.find(({ message }) => message.type === 'popup-status')
+    .resolve({ connected: false, ready: false });
+  await waitFor(() => popup.elements.get('status').textContent === 'No Canva presentation connected.');
+
+  assert.equal(popup.elements.get('show-phone-pairing').disabled, true);
+  assert.equal(popup.elements.get('phone-pairing-hint').hidden, false);
+});
+
+test('popup opens hosted phone pairing for a ready Canva target', async () => {
+  const popup = await createPopupHarness();
+  popup.requests.find(({ message }) => message.type === 'popup-status')
+    .resolve({ connected: true, ready: true });
+  await waitFor(() => popup.elements.get('show-phone-pairing').disabled === false);
+
+  assert.equal(popup.elements.get('phone-pairing-hint').hidden, true);
+  popup.elements.get('show-phone-pairing').listeners.get('click')();
+  await waitFor(() => popup.openedTabs.length === 1);
+  assert.equal(popup.openedTabs.length, 1);
+  assert.equal(
+    popup.openedTabs[0].url,
+    'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+  );
+});
+
+test('popup reports an error when hosted phone pairing cannot be opened', async () => {
+  const popup = await createPopupHarness();
+  popup.context.chrome.tabs.create = async () => { throw new Error('blocked'); };
+  popup.requests.find(({ message }) => message.type === 'popup-status')
+    .resolve({ connected: true, ready: true });
+  await waitFor(() => popup.elements.get('show-phone-pairing').disabled === false);
+
+  popup.elements.get('show-phone-pairing').listeners.get('click')();
+  await waitFor(() => popup.elements.get('status').textContent === 'Could not open the hosted phone pairing page. Try again.');
+});
 
 test('extension protocol allows only loopback controller pages and Canva navigation', () => {
   assert.equal(isLoopbackControllerUrl('http://127.0.0.1:5173/'), true);

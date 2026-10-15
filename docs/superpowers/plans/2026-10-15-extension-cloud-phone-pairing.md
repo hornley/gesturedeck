@@ -155,4 +155,4 @@ This waits for the bridge request to resolve before auto-starting. The existing 
 - **Spec coverage:** Task 1 covers the popup action, ready-only enablement, hosted URL, and failure message. Task 2 covers the exact-origin query gate, initial readiness check, automatic start, and no-auto-start guidance. Task 3 updates setup instructions. Delivery preserves the user's preference to send the change to both repositories.
 - **Placeholder scan:** No TODO, TBD, or unspecified implementation steps remain.
 - **Consistency:** The URL query key is `connect=phone` in both tasks. The hosted flow checks `connected` and `ready`, and passes `startCloudSession: false` only in the not-ready path. Existing manual PDF and local pairing continue to work.
-- **Verification:** This plan does not add or run tests. The user has not requested test execution for this feature.
+- **Verification:** Add popup regression tests for disabled phone pairing and visible guidance before Canva is ready, enabling and opening the exact hosted pairing URL when ready, and reporting a failed `tabs.create` call. Run `node --test tests/canva-extension.test.js` and the full `npm test` suite.
