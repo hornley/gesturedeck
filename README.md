@@ -113,7 +113,7 @@ The phone receives only the slide index and count when available, busy state, ta
 
 Live Canva control uses the GestureDeck Chrome extension with either the local GestureDeck workspace or the hosted workspace at `https://gesturedeck-two.vercel.app/workspace.html?experience=cloud`. Hand-camera setup is not needed.
 
-1. In Chrome, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select this repository's `extension/` folder. If the extension is already loaded, click **Reload**.
+1. In Chrome, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select this repository's `extension/` folder. If the extension is already loaded, click **Reload**, then accept Chrome's debugger permission warning. This incomplete control method uses Chrome's debugger API, so Chrome displays its native “started debugging this browser” banner while it is attached.
 2. Open a Canva design in **Present** or **View** mode. Click the GestureDeck extension icon and choose **Connect this presentation**.
 3. For local phone pairing, start GestureDeck with `npm run dev`, open `http://localhost:5173` or `http://127.0.0.1:5173` on the presenter computer, and follow [Use the local phone remote](#use-the-local-phone-remote). Phones must be on the same trusted Wi-Fi or Tailscale network.
 4. For hosted phone pairing, click **Show phone QR/link** in the extension popup. GestureDeck opens the hosted workspace in a new tab and starts pairing. Scan its QR code or copy the link; up to eight phones can join from any network. Return to the Canva tab to present while keeping the hosted workspace open for pairing status.
