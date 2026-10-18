@@ -414,7 +414,9 @@ export function mountMobileRemotePhone({
       && typeof message.id === 'string' && pendingCommands.delete(message.id)
       && typeof message.accepted === 'boolean') {
       actionStatus.textContent = message.accepted
-        ? 'Command accepted by presenter.'
+        ? currentState?.target === 'canva'
+          ? 'Navigation sent to Canva.'
+          : 'Command accepted by presenter.'
         : 'Command was not accepted. Check the presentation connection and try again.';
       return;
     }

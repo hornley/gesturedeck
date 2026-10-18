@@ -498,14 +498,22 @@ test('secure UUID IDs remain available on local HTTP when randomUUID is restrict
   assert.equal(result.socket.sent.at(-1).id, '00010203-0405-4607-8809-0a0b0c0d0e0f');
 });
 
-test('command acknowledgements update action status', () => {
+test('Canva phone acknowledgement reports that navigation was sent', () => {
+  const result = setup();
+  paired(result, { target: 'canva', ready: true, index: null, total: null, busy: false });
+  result.document.getElementById('next-button').dispatch('click');
+  const command = result.socket.sent.at(-1);
+  result.socket.message({ type: 'commandAck', id: command.id, accepted: true });
+  assert.equal(result.document.getElementById('action-status').textContent, 'Navigation sent to Canva.');
+});
+
+test('local deck phone keeps the generic presenter acknowledgement', () => {
   const result = setup();
   paired(result);
   result.document.getElementById('next-button').dispatch('click');
   const command = result.socket.sent.at(-1);
-  assert.equal(command.action, 'next');
   result.socket.message({ type: 'commandAck', id: command.id, accepted: true });
-  assert.match(result.document.getElementById('action-status').textContent, /accepted|sent|updated/i);
+  assert.equal(result.document.getElementById('action-status').textContent, 'Command accepted by presenter.');
 });
 
 test('explicit Disconnect sends disconnect, clears credential, and prevents reconnect', () => {
