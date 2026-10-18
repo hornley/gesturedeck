@@ -735,6 +735,45 @@ test('hosted Redis relay migrates a legacy single-phone session before pairing a
     phone.phoneId === 'legacy-phone-id' && phone.status === 'connected'));
 });
 
+test('hosted Redis relay preserves distinct phone pair rejection reasons', async (t) => {
+  const scenarios = [
+    {
+      reason: 'session-missing',
+      prepare: (fixture, sessionKey) => fixture.redis.del(sessionKey),
+    },
+    {
+      reason: 'session-ended',
+      prepare: async (fixture, sessionKey) => {
+        const session = await fixture.redis.get(sessionKey);
+        session.active = false;
+        await fixture.redis.set(sessionKey, session);
+      },
+    },
+    {
+      reason: 'expired',
+      prepare: async (fixture, sessionKey) => {
+        const session = await fixture.redis.get(sessionKey);
+        session.inviteExpiresAt = 0;
+        await fixture.redis.set(sessionKey, session);
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const fixture = await createFixture();
+    t.after(() => fixture.close());
+    await fixture.presenter();
+    const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+    await scenario.prepare(fixture, sessionKey);
+
+    const phone = await fixture.connect('phone');
+    phone.send({ type: 'pair', invite: fixture.pairing.fallbackUrl.split('#')[1], nickname: '', deviceType: 'phone' });
+    assert.deepEqual(await phone.waitFor('pairRejected'), {
+      type: 'pairRejected', reason: scenario.reason,
+    });
+  }
+});
+
 test('hosted Redis relay can renew the shared invite while phones remain paired', async (t) => {
   const fixture = await createFixture();
   t.after(() => fixture.close());
@@ -749,6 +788,12 @@ test('hosted Redis relay can renew the shared invite while phones remain paired'
   assert.equal(renewed.status, 200);
   const renewedInvite = renewed.body.fallbackUrl.split('#')[1];
   assert.notEqual(renewedInvite, oldInvite);
+
+  const staleLink = await fixture.connect('phone');
+  staleLink.send({ type: 'pair', invite: oldInvite, nickname: '', deviceType: 'phone' });
+  assert.deepEqual(await staleLink.waitFor('pairRejected'), {
+    type: 'pairRejected', reason: 'invalid',
+  });
 
   presenter.send({ type: 'state', index: 2, total: 12, busy: false });
   await first.peer.waitFor('state', (message) => message.index === 2);
