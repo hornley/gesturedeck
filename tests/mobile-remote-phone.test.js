@@ -156,7 +156,7 @@ test('expired invite rejection shows specific recovery guidance', () => {
   assert.equal(result.document.getElementById('previous-button').disabled, true);
 });
 
-test('pair rejection renders reason-specific recovery for all known reasons', () => {
+test('pair rejection uses reason-specific recovery copy', () => {
   for (const [reason, expected] of [
     ['invalid', /invalid/i],
     ['session-full', /eight phones/i],
