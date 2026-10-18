@@ -512,7 +512,7 @@ function objectFromScriptResult(value) {
   } catch { return null; }
 }
 
-function normalizePresenterAuthState(value) {
+function normalizeRelayState(value) {
   if (!isRecord(value)) return null;
   if (value.target === 'canva') {
     const allowed = new Set(['target', 'ready', 'busy', 'index', 'total']);
@@ -530,7 +530,7 @@ function presenterAuthResultFromScript(value) {
   if (!result) return { status: 'invalid-state' };
   if (result.status === 'ok') {
     if (Object.keys(result).sort().join(',') !== 'state,status') return { status: 'invalid-state' };
-    const state = normalizePresenterAuthState(result.state);
+    const state = normalizeRelayState(result.state);
     return state ? { status: 'ok', state } : { status: 'invalid-state' };
   }
   if (Object.keys(result).join(',') !== 'status'
@@ -550,7 +550,7 @@ function phonePairRejectionReason(value) {
 
 function phoneIdentityFromScriptResult(value) {
   const parsed = objectFromScriptResult(value);
-  const state = sanitizeState(parsed?.state);
+  const state = normalizeRelayState(parsed?.state);
   if (!state || typeof parsed.phoneId !== 'string' || !PHONE_ID_PATTERN.test(parsed.phoneId)
     || typeof parsed.label !== 'string' || parsed.label.length < 1 || parsed.label.length > 64
     || !DEVICE_TYPES.has(parsed.deviceType)) return null;

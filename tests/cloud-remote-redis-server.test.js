@@ -493,6 +493,31 @@ test('hosted Redis relay authenticates fresh Canva sessions and canonicalizes Re
   }
 });
 
+test('hosted Redis relay canonicalizes omitted Canva slide fields returned during phone pairing', async (t) => {
+  const fixture = await createFixture({
+    state: { target: 'canva', ready: true, index: null, total: null, busy: false },
+  });
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const evalRedis = fixture.redis.eval.bind(fixture.redis);
+  fixture.redis.eval = async (script, keys, args) => {
+    const result = await evalRedis(script, keys, args);
+    if (!script.includes('-- REDIS_OP:PHONE_PAIR') || typeof result !== 'string' || !result.startsWith('{')) {
+      return result;
+    }
+    const parsed = JSON.parse(result);
+    delete parsed.state.index;
+    delete parsed.state.total;
+    return JSON.stringify(parsed);
+  };
+
+  const phone = await fixture.pairPhone(presenter);
+
+  assert.deepEqual(phone.paired.state, {
+    target: 'canva', ready: true, index: null, total: null, busy: false,
+  });
+});
+
 test('hosted Redis relay keeps presenter authentication outcomes distinct and safe', async (t) => {
   const cases = [
     {
