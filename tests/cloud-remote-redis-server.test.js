@@ -9,12 +9,16 @@ const ORIGIN = 'https://gesturedeck.test';
 const HOST = 'gesturedeck.test';
 
 class MemoryRedis {
-  constructor() {
+  constructor({ setResults = [], presenterAuthResults = [], presenterAuthStateOverrides = [] } = {}) {
     this.values = new Map();
     this.streams = new Map();
     this.subscribers = new Map();
     this.streamOrdinal = 0;
     this.commandKeys = new Set();
+    this.setResults = [...setResults];
+    this.setCalls = 0;
+    this.presenterAuthResults = [...presenterAuthResults];
+    this.presenterAuthStateOverrides = [...presenterAuthStateOverrides];
   }
 
   async get(key) {
@@ -23,6 +27,11 @@ class MemoryRedis {
   }
 
   async set(key, value, options = {}) {
+    this.setCalls += 1;
+    if (this.setResults.length) {
+      const result = this.setResults.shift();
+      if (result !== 'OK') return result;
+    }
     if (options.nx && this.values.has(key)) return null;
     this.values.set(key, structuredClone(value));
     return 'OK';
@@ -54,14 +63,31 @@ class MemoryRedis {
   async eval(script, keys, args) {
     const operation = script.match(/REDIS_OP:([A-Z_]+)/)?.[1];
     if (operation === 'PRESENTER_AUTH') {
+      if (this.presenterAuthResults.length) return this.presenterAuthResults.shift();
       const session = this.values.get(keys[0]);
-      if (!session) return 'missing';
-      if (!session.active) return 'ended';
-      if (session.hostCredential !== args[0]) return 'invalid';
-      if (this.values.has(keys[1])) return 'occupied';
+      if (!session) return JSON.stringify({ status: 'missing' });
+      if (!session.active) return JSON.stringify({ status: 'ended' });
+      if (session.hostCredential !== args[0]) return JSON.stringify({ status: 'invalid' });
+      let state = session.state;
+      if (state?.target === 'canva') {
+        const allowed = new Set(['target', 'ready', 'busy', 'index', 'total']);
+        if (Object.keys(state).some((field) => !allowed.has(field))
+          || typeof state.ready !== 'boolean' || state.busy !== false
+          || state.index !== undefined && state.index !== null
+          || state.total !== undefined && state.total !== null) {
+          return JSON.stringify({ status: 'invalid-state' });
+        }
+        state = { target: 'canva', ready: state.ready, index: null, total: null, busy: false };
+        session.state = state;
+        this.values.set(keys[0], session);
+      }
+      if (this.values.has(keys[1])) return JSON.stringify({ status: 'occupied' });
       this.values.set(keys[1], args[1]);
-      this.#publish(keys[2], keys[3], { type: 'state', ...session.state });
-      return JSON.stringify(session.state);
+      this.#publish(keys[2], keys[3], { type: 'state', ...state });
+      return JSON.stringify({
+        status: 'ok',
+        state: this.presenterAuthStateOverrides.shift() ?? state,
+      });
     }
 
     if (operation === 'RENEW_INVITE') {
@@ -383,20 +409,24 @@ async function postCloudRoute(port, route, body) {
   });
 }
 
-async function createFixture() {
-  const redis = new MemoryRedis();
+async function createFixture({
+  redis = new MemoryRedis(),
+  state = { index: 0, total: 12, busy: false },
+  expectedStartStatus = 200,
+} = {}) {
   const server = createServer();
   const relay = attachRedisCloudRemote(server, { redis, webSocketFunctionPath: '/api/cloud-remote-ws' });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const peers = new Set();
 
   const pairingResponse = await postCloudRoute(server.address().port, 'start', {
-    state: { index: 0, total: 12, busy: false },
+    state,
   });
-  assert.equal(pairingResponse.status, 200);
-  const pairing = pairingResponse.body;
+  assert.equal(pairingResponse.status, expectedStartStatus);
+  const pairing = pairingResponse.status === 200 ? pairingResponse.body : null;
 
   async function connect(route) {
+    assert.ok(pairing, 'a successful session start is required before connecting a peer');
     const peer = await connectPeer(server.address().port, pairing.sessionId, route);
     peers.add(peer);
     return peer;
@@ -419,7 +449,7 @@ async function createFixture() {
   }
 
   return {
-    redis, server, relay, pairing, peers, connect, presenter, pairPhone,
+    redis, server, relay, pairing, pairingResponse, peers, connect, presenter, pairPhone,
     async close() {
       await Promise.all([...peers].map((peer) => peer.close()));
       await relay.close();
@@ -427,6 +457,126 @@ async function createFixture() {
     },
   };
 }
+
+async function rejectPresenterAuth(fixture, credential = fixture.pairing.hostCredential) {
+  const peer = await fixture.connect('presenter');
+  peer.send({ type: 'presenter', credential });
+  return peer.waitFor('presenterRejected');
+}
+
+test('hosted Redis relay authenticates fresh Canva sessions and canonicalizes Redis state', async (t) => {
+  const cases = [
+    {
+      ready: false,
+      authState: { target: 'canva', ready: false, index: null, total: null, busy: false },
+    },
+    {
+      ready: true,
+      authState: { target: 'canva', ready: true, busy: false },
+    },
+  ];
+
+  for (const scenario of cases) {
+    const fixture = await createFixture({
+      state: { target: 'canva', ready: scenario.ready, index: null, total: null, busy: false },
+    });
+    fixture.redis.presenterAuthStateOverrides.push(scenario.authState);
+    t.after(() => fixture.close());
+
+    const presenter = await fixture.presenter();
+    const phone = await fixture.pairPhone(presenter);
+    const expectedState = {
+      target: 'canva', ready: scenario.ready, index: null, total: null, busy: false,
+    };
+    assert.deepEqual(phone.paired.state, expectedState);
+    assert.deepEqual(await phone.peer.waitFor('state'), { type: 'state', ...expectedState });
+  }
+});
+
+test('hosted Redis relay keeps presenter authentication outcomes distinct and safe', async (t) => {
+  const cases = [
+    {
+      name: 'missing session',
+      reason: 'session-missing',
+      prepare: async (fixture) => fixture.redis.del(`gesturedeck:${fixture.pairing.sessionId}`),
+    },
+    {
+      name: 'ended session',
+      reason: 'session-ended',
+      prepare: async (fixture) => {
+        const key = `gesturedeck:${fixture.pairing.sessionId}`;
+        const session = await fixture.redis.get(key);
+        session.active = false;
+        await fixture.redis.set(key, session);
+      },
+    },
+    {
+      name: 'credential mismatch',
+      reason: 'invalid-credential',
+      credential: 'wrong-credential',
+    },
+    {
+      name: 'occupied presenter lease',
+      reason: 'already-connected',
+      prepare: (fixture) => fixture.redis.set(
+        `gesturedeck:${fixture.pairing.sessionId}:presenter-lease`, 'another-presenter',
+      ),
+    },
+    {
+      name: 'invalid Redis state status',
+      reason: 'invalid-session-state',
+      prepare: async (fixture) => {
+        const key = `gesturedeck:${fixture.pairing.sessionId}`;
+        const session = await fixture.redis.get(key);
+        session.state = { target: 'canva', ready: true, index: 3, total: 12, busy: false };
+        await fixture.redis.set(key, session);
+      },
+    },
+    {
+      name: 'invalid serialized state',
+      reason: 'invalid-session-state',
+      prepare: (fixture) => fixture.redis.presenterAuthResults.push(JSON.stringify({
+        status: 'ok',
+        state: { target: 'canva', ready: true, index: 3, total: 12, busy: false },
+      })),
+    },
+    {
+      name: 'malformed Redis result',
+      reason: 'invalid-session-state',
+      prepare: (fixture) => fixture.redis.presenterAuthResults.push('untrusted Redis output'),
+    },
+  ];
+
+  for (const scenario of cases) {
+    const fixture = await createFixture();
+    t.after(() => fixture.close());
+    await scenario.prepare?.(fixture);
+
+    const rejection = await rejectPresenterAuth(fixture, scenario.credential);
+    assert.deepEqual(rejection, { type: 'presenterRejected', reason: scenario.reason }, scenario.name);
+  }
+});
+
+test('hosted Redis relay retries a colliding session ID before returning credentials', async (t) => {
+  const redis = new MemoryRedis({ setResults: [null, 'OK'] });
+  const fixture = await createFixture({ redis });
+  t.after(() => fixture.close());
+
+  assert.equal(redis.setCalls, 2);
+  assert.ok(redis.values.has(`gesturedeck:${fixture.pairing.sessionId}`));
+  assert.equal(typeof fixture.pairing.hostCredential, 'string');
+});
+
+test('hosted Redis relay with no successful SET NX result returns no session credentials', async (t) => {
+  const redis = new MemoryRedis({ setResults: [null, null, null] });
+  const fixture = await createFixture({ redis, expectedStartStatus: 503 });
+  t.after(() => fixture.close());
+
+  assert.equal(redis.setCalls, 3);
+  assert.deepEqual(fixture.pairingResponse.body, { error: 'relay-storage-unavailable' });
+  assert.equal(fixture.pairing, null);
+  assert.equal(redis.values.size, 0);
+});
 
 test('hosted Redis relay pairs multiple phones, broadcasts state, and routes acknowledgements to the source', async (t) => {
   const fixture = await createFixture();

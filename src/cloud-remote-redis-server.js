@@ -12,6 +12,7 @@ const LEASE_TTL_SECONDS = 20;
 const POLL_INTERVAL_MS = 5_000;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_PHONE_RECORDS = 8;
+const MAX_SESSION_ID_ATTEMPTS = 3;
 const MAX_NICKNAME_LENGTH = 32;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{16}$/;
 const PHONE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -20,18 +21,48 @@ const isRecord = (value) => value !== null && typeof value === 'object' && !Arra
 
 const PRESENTER_AUTH_SCRIPT = `
 -- REDIS_OP:PRESENTER_AUTH
+local function authResult(status, state)
+  if state then return cjson.encode({status = status, state = state}) end
+  return cjson.encode({status = status})
+end
 local raw = redis.call('GET', KEYS[1])
-if not raw then return 'missing' end
+if not raw then return authResult('missing') end
 local session = cjson.decode(raw)
-if not session.active then return 'ended' end
-if session.hostCredential ~= ARGV[1] then return 'invalid' end
-if redis.call('SET', KEYS[2], ARGV[2], 'NX', 'EX', ARGV[3]) == false then return 'occupied' end
+if not session.active then return authResult('ended') end
+if session.hostCredential ~= ARGV[1] then return authResult('invalid') end
+local state = session.state
+if type(state) ~= 'table' then return authResult('invalid-state') end
+if state.target == 'canva' then
+  local allowed = {target = true, ready = true, busy = true, index = true, total = true}
+  for field, _ in pairs(state) do
+    if not allowed[field] then return authResult('invalid-state') end
+  end
+  if type(state.ready) ~= 'boolean' or state.busy ~= false
+    or (state.index ~= nil and state.index ~= cjson.null)
+    or (state.total ~= nil and state.total ~= cjson.null) then
+    return authResult('invalid-state')
+  end
+  state = {target = 'canva', ready = state.ready,
+    index = cjson.null, total = cjson.null, busy = false}
+  session.state = state
+  redis.call('SET', KEYS[1], cjson.encode(session), 'KEEPTTL')
+else
+  if type(state.index) ~= 'number' or type(state.total) ~= 'number'
+    or state.total < 1 or state.index < 0 or state.index >= state.total
+    or state.index % 1 ~= 0 or state.total % 1 ~= 0 or type(state.busy) ~= 'boolean' then
+    return authResult('invalid-state')
+  end
+  state = {index = state.index, total = state.total, busy = state.busy}
+end
+if redis.call('SET', KEYS[2], ARGV[2], 'NX', 'EX', ARGV[3]) == false then
+  return authResult('occupied')
+end
 local message = {type = 'state'}
-for field, value in pairs(session.state) do message[field] = value end
+for field, value in pairs(state) do message[field] = value end
 local eventId = redis.call('XADD', KEYS[3], 'MAXLEN', '~', 2000, '*', 'data', cjson.encode(message))
 redis.call('EXPIRE', KEYS[3], ARGV[4])
 redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, message = message}))
-return cjson.encode(session.state)
+return authResult('ok', state)
 `;
 
 const RENEW_INVITE_SCRIPT = `
@@ -481,8 +512,32 @@ function objectFromScriptResult(value) {
   } catch { return null; }
 }
 
-function stateFromScriptResult(value) {
-  return sanitizeState(objectFromScriptResult(value));
+function normalizePresenterAuthState(value) {
+  if (!isRecord(value)) return null;
+  if (value.target === 'canva') {
+    const allowed = new Set(['target', 'ready', 'busy', 'index', 'total']);
+    if (Object.keys(value).some((field) => !allowed.has(field))
+      || typeof value.ready !== 'boolean' || value.busy !== false
+      || Object.hasOwn(value, 'index') && value.index !== null
+      || Object.hasOwn(value, 'total') && value.total !== null) return null;
+    return { target: 'canva', ready: value.ready, index: null, total: null, busy: false };
+  }
+  return sanitizeState(value);
+}
+
+function presenterAuthResultFromScript(value) {
+  const result = objectFromScriptResult(value);
+  if (!result) return { status: 'invalid-state' };
+  if (result.status === 'ok') {
+    if (Object.keys(result).sort().join(',') !== 'state,status') return { status: 'invalid-state' };
+    const state = normalizePresenterAuthState(result.state);
+    return state ? { status: 'ok', state } : { status: 'invalid-state' };
+  }
+  if (Object.keys(result).join(',') !== 'status'
+    || !['missing', 'ended', 'invalid', 'occupied', 'invalid-state'].includes(result.status)) {
+    return { status: 'invalid-state' };
+  }
+  return { status: result.status };
 }
 
 function phoneIdentityFromScriptResult(value) {
@@ -857,10 +912,20 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
           const result = await redis.eval(PRESENTER_AUTH_SCRIPT,
             [sessionKey, leaseKey, key(id, 'to-phone'), channelKey(id, 'phone')],
             [message.credential, connectionId, String(LEASE_TTL_SECONDS), String(SESSION_TTL_SECONDS)]);
-          const initialState = stateFromScriptResult(result);
-          if (!initialState) {
-            socket.send({ type: 'presenterRejected', reason: result === 'occupied' ? 'already-connected' : 'invalid-credential' });
-            socket.close(1008, 'Invalid credential');
+          const authResult = presenterAuthResultFromScript(result);
+          if (authResult.status !== 'ok') {
+            const rejectionReasons = {
+              missing: 'session-missing',
+              ended: 'session-ended',
+              invalid: 'invalid-credential',
+              occupied: 'already-connected',
+              'invalid-state': 'invalid-session-state',
+            };
+            socket.send({
+              type: 'presenterRejected',
+              reason: rejectionReasons[authResult.status] ?? 'invalid-session-state',
+            });
+            socket.close(1008, 'Presenter authentication rejected');
             return;
           }
           authenticated = true;
@@ -1149,14 +1214,26 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         if (!state) { sendJson(response, 400, { error: 'invalid-state' }); return; }
         const origin = new URL(request.headers.origin);
         if (origin.protocol !== 'https:') { sendJson(response, 426, { error: 'https-required' }); return; }
-        const id = token(12);
         const hostCredential = token();
         const invite = token();
         const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
         const session = { active: true, origin: origin.origin, hostCredential, invite,
           inviteExpiresAt: Date.now() + INVITE_TTL_MS, pairAttempts: 0,
           phones: {}, nextPhoneOrdinal: 1, state, expiresAt };
-        await redis.set(key(id), session, { ex: SESSION_TTL_SECONDS, nx: true });
+        let id = '';
+        let stored = false;
+        for (let attempt = 0; attempt < MAX_SESSION_ID_ATTEMPTS; attempt += 1) {
+          id = token(12);
+          const result = await redis.set(key(id), session, { ex: SESSION_TTL_SECONDS, nx: true });
+          if (result === 'OK') {
+            stored = true;
+            break;
+          }
+        }
+        if (!stored) {
+          sendJson(response, 503, { error: 'relay-storage-unavailable' });
+          return;
+        }
         const pairingUrl = new URL(`/r/${id}`, origin.origin);
         pairingUrl.hash = invite;
         sendJson(response, 200, { sessionId: id, hostCredential, expiresAt,
