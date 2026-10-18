@@ -199,6 +199,7 @@ test('extension protocol allows only loopback controller pages and Canva navigat
 
 test('extension permissions stay limited to the selected tab and approved controller origins', async () => {
   const manifest = JSON.parse(await readFile(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.version, '0.1.1');
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual([...manifest.permissions].sort(), ['activeTab', 'scripting', 'storage']);
   assert.deepEqual(manifest.content_scripts[0].matches.sort(), [
