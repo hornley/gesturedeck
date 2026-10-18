@@ -525,6 +525,18 @@ test('presenter pairing lists phones and disconnects one without affecting the s
         status: 'The presenter session was rejected as already in use (`already-connected`). Disconnect all, then create a new session.',
       },
       {
+        event: { type: 'presenterRejected', reason: 'session-missing' },
+        status: 'The presenter session could not be found (`session-missing`). Disconnect all, then create a new session.',
+      },
+      {
+        event: { type: 'presenterRejected', reason: 'session-ended' },
+        status: 'The presenter session has ended (`session-ended`). Disconnect all, then create a new session.',
+      },
+      {
+        event: { type: 'presenterRejected', reason: 'invalid-session-state' },
+        status: 'The presenter session state could not be read (`invalid-session-state`). Disconnect all, then create a new session.',
+      },
+      {
         event: { type: 'presenterRejected', reason: 'untrusted invite secret' },
         status: 'The presenter connection was rejected. Disconnect all, then create a new session.',
       },

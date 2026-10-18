@@ -911,12 +911,15 @@ function handleMobileRemoteConnection(event, generation) {
   if (event.type === 'rejected') {
     clearPairingMaterial();
     presenterConnectionRejected = true;
-    const rejectionMessage = event.reason === 'already-connected'
-      ? 'The presenter session was rejected as already in use (`already-connected`). Disconnect all, then create a new session.'
-      : event.reason === 'invalid-credential'
-        ? 'The presenter session could not be verified (`invalid-credential`). Disconnect all, then create a new session.'
-        : 'The presenter connection was rejected. Disconnect all, then create a new session.';
-    setPairingStatus(rejectionMessage);
+    const rejectionMessages = {
+      'already-connected': 'The presenter session was rejected as already in use (`already-connected`). Disconnect all, then create a new session.',
+      'invalid-credential': 'The presenter session could not be verified (`invalid-credential`). Disconnect all, then create a new session.',
+      'session-missing': 'The presenter session could not be found (`session-missing`). Disconnect all, then create a new session.',
+      'session-ended': 'The presenter session has ended (`session-ended`). Disconnect all, then create a new session.',
+      'invalid-session-state': 'The presenter session state could not be read (`invalid-session-state`). Disconnect all, then create a new session.',
+    };
+    setPairingStatus(rejectionMessages[event.reason]
+      ?? 'The presenter connection was rejected. Disconnect all, then create a new session.');
     return;
   }
   if (event.type === 'closed' || event.type === 'sessionEnded') {
