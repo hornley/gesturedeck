@@ -156,11 +156,13 @@ test('expired invite rejection shows specific recovery guidance', () => {
   assert.equal(result.document.getElementById('previous-button').disabled, true);
 });
 
-test('pair rejection renders reason-specific recovery for invalid, full, and unavailable hosts', () => {
+test('pair rejection uses reason-specific recovery copy', () => {
   for (const [reason, expected] of [
     ['invalid', /invalid/i],
     ['session-full', /eight phones/i],
     ['host-unavailable', /presenter|ready/i],
+    ['session-missing', /session is no longer available/i],
+    ['session-ended', /presenter ended this session/i],
   ]) {
     const result = setup();
     result.document.getElementById('connect-button').dispatch('click');

@@ -540,6 +540,14 @@ function presenterAuthResultFromScript(value) {
   return { status: result.status };
 }
 
+function phonePairRejectionReason(value) {
+  if (value === 'missing') return 'session-missing';
+  if (value === 'ended') return 'session-ended';
+  return ['expired', 'invalid', 'session-full', 'host-unavailable'].includes(value)
+    ? value
+    : 'invalid';
+}
+
 function phoneIdentityFromScriptResult(value) {
   const parsed = objectFromScriptResult(value);
   const state = sanitizeState(parsed?.state);
@@ -1065,9 +1073,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
                 metadata.nickname, metadata.deviceType, String(MAX_PHONE_RECORDS)]);
             const identity = phoneIdentityFromScriptResult(raw);
             if (!identity) {
-              const reason = ['expired', 'session-full', 'host-unavailable'].includes(raw)
-                ? raw
-                : 'invalid';
+              const reason = phonePairRejectionReason(raw);
               socket.send({ type: 'pairRejected', reason });
               return;
             }
