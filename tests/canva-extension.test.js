@@ -619,12 +619,25 @@ test('extension clears a Canva target after the selected tab reloads without its
   });
 });
 
-test('Canva content script dispatches arrow keys only on presentation routes', async () => {
+test('Canva content script clicks one enabled labeled button on presentation routes', async () => {
   const source = await readFile(new URL('../extension/content/canva-content.js', import.meta.url), 'utf8');
   const messages = [];
-  const events = [];
   const handlers = [];
   const location = { pathname: '/design/deck-1/present' };
+  const makeButton = (label, { disabled = false, ariaDisabled = null, throws = false } = {}) => ({
+    disabled,
+    clicks: 0,
+    getAttribute(name) {
+      if (name === 'aria-label') return label;
+      if (name === 'aria-disabled') return ariaDisabled;
+      return null;
+    },
+    click() {
+      this.clicks += 1;
+      if (throws) throw new Error('click failed');
+    },
+  });
+  let buttons = [makeButton('Previous page'), makeButton('Next page')];
   const context = {
     location,
     chrome: { runtime: {
@@ -632,10 +645,10 @@ test('Canva content script dispatches arrow keys only on presentation routes', a
       sendMessage: (message) => { messages.push(message); return Promise.resolve(); },
     } },
     window: { addEventListener() {} },
-    document: { addEventListener() {}, dispatchEvent: (event) => events.push(event) },
-    KeyboardEvent: class {
-      constructor(type, options) { this.type = type; Object.assign(this, options); }
-    },
+    document: { querySelectorAll: (selector) => {
+      assert.equal(selector, 'button[aria-label]');
+      return buttons;
+    } },
   };
   context.globalThis = context;
   runInNewContext(source, context);
@@ -646,18 +659,33 @@ test('Canva content script dispatches arrow keys only on presentation routes', a
   };
 
   assert.equal(receive({ type: 'probe' }).ready, true);
-  const dispatched = receive({ type: 'keypress', key: 'ArrowRight' });
-  assert.equal(dispatched.accepted, true);
-  assert.equal(dispatched.ready, true);
-  assert.deepEqual(events.map(({ type, key }) => [type, key]), [
-    ['keydown', 'ArrowRight'], ['keyup', 'ArrowRight'],
-  ]);
+  assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, { accepted: true, ready: true });
+  assert.deepEqual(buttons.map(({ clicks }) => clicks), [0, 1]);
+  buttons = [makeButton('  PREVIOUS\n  page  ')];
+  assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowLeft' }) }, { accepted: true, ready: true });
+  assert.equal(buttons[0].clicks, 1);
   assert.equal(receive({ type: 'keypress', key: 'Home' }), undefined);
+
+  for (const unavailableButtons of [
+    [],
+    [makeButton('Next page', { disabled: true })],
+    [makeButton('Next page', { ariaDisabled: 'true' })],
+    [makeButton('Next page'), makeButton(' Next   page ')],
+  ]) {
+    buttons = unavailableButtons;
+    assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, { accepted: false, ready: true });
+    assert.equal(buttons.reduce((total, button) => total + button.clicks, 0), 0);
+  }
+
+  buttons = [makeButton('Next page', { throws: true })];
+  assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, { accepted: false, ready: true });
+  assert.equal(buttons[0].clicks, 1);
+
   location.pathname = '/design/deck-1/edit';
+  buttons = [makeButton('Previous page')];
   assert.equal(receive({ type: 'probe' }).ready, false);
   const rejected = receive({ type: 'keypress', key: 'ArrowLeft' });
-  assert.equal(rejected.accepted, false);
-  assert.equal(rejected.ready, false);
-  assert.equal(events.length, 2);
+  assert.deepEqual({ ...rejected }, { accepted: false, ready: false });
+  assert.equal(buttons[0].clicks, 0);
   assert.equal(messages.some(({ type }) => type === 'target-readiness'), true);
 });

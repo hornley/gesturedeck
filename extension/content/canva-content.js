@@ -6,6 +6,20 @@
     return /\/(?:present|view)(?:\/|$)/.test(location.pathname);
   }
 
+  function normalizeAccessibleName(value) {
+    return String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function findNavigationButton(label) {
+    const matches = [...document.querySelectorAll('button[aria-label]')]
+      .filter((button) => normalizeAccessibleName(button.getAttribute('aria-label')) === label);
+    if (matches.length !== 1) return null;
+
+    const [button] = matches;
+    if (button.disabled || normalizeAccessibleName(button.getAttribute('aria-disabled')) === 'true') return null;
+    return button;
+  }
+
   function reportReadiness() {
     void chrome.runtime.sendMessage({ type: 'target-readiness', ready: isPresentationMode() }).catch(() => {});
   }
@@ -21,14 +35,14 @@
       sendResponse({ accepted: false, ready: false });
       return false;
     }
-    const key = message.key;
     try {
-      // These synthetic keyboard events are untrusted and Canva may ignore them.
-      for (const type of ['keydown', 'keyup']) {
-        document.dispatchEvent(new KeyboardEvent(type, {
-          key, code: key, bubbles: true, cancelable: true,
-        }));
+      const label = message.key === 'ArrowLeft' ? 'previous page' : 'next page';
+      const button = findNavigationButton(label);
+      if (!button) {
+        sendResponse({ accepted: false, ready: true });
+        return false;
       }
+      button.click();
       sendResponse({ accepted: true, ready: true });
     } catch {
       sendResponse({ accepted: false, ready: isPresentationMode() });
