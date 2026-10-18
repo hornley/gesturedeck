@@ -16,7 +16,7 @@
     if (matches.length !== 1) return null;
 
     const [button] = matches;
-    if (button.disabled || normalizeAccessibleName(button.getAttribute('aria-disabled')) === 'true') return null;
+    if (button.matches(':disabled') || normalizeAccessibleName(button.getAttribute('aria-disabled')) === 'true') return null;
     return button;
   }
 

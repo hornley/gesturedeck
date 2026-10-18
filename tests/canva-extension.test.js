@@ -624,9 +624,13 @@ test('Canva content script clicks one enabled labeled button on presentation rou
   const messages = [];
   const handlers = [];
   const location = { pathname: '/design/deck-1/present' };
-  const makeButton = (label, { disabled = false, ariaDisabled = null, throws = false } = {}) => ({
+  const makeButton = (label, { disabled = false, effectiveDisabled = disabled, ariaDisabled = null, throws = false } = {}) => ({
     disabled,
     clicks: 0,
+    matches(selector) {
+      assert.equal(selector, ':disabled');
+      return effectiveDisabled;
+    },
     getAttribute(name) {
       if (name === 'aria-label') return label;
       if (name === 'aria-disabled') return ariaDisabled;
@@ -669,6 +673,7 @@ test('Canva content script clicks one enabled labeled button on presentation rou
   for (const unavailableButtons of [
     [],
     [makeButton('Next page', { disabled: true })],
+    [makeButton('Next page', { effectiveDisabled: true })],
     [makeButton('Next page', { ariaDisabled: 'true' })],
     [makeButton('Next page'), makeButton(' Next   page ')],
   ]) {
