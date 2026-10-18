@@ -2,22 +2,33 @@
   if (globalThis.__gestureDeckCanvaContent) return;
   globalThis.__gestureDeckCanvaContent = true;
 
-  function isPresentationMode() {
-    return /\/(?:present|view)(?:\/|$)/.test(location.pathname);
-  }
-
   function normalizeAccessibleName(value) {
     return String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
+  function getNavigationControls() {
+    return [...document.querySelectorAll('button[aria-label], [role="button"][aria-label]')];
+  }
+
+  function hasPresentationControls() {
+    return getNavigationControls().some((control) => {
+      const label = normalizeAccessibleName(control.getAttribute('aria-label'));
+      return label === 'previous page' || label === 'next page';
+    });
+  }
+
+  function isPresentationMode() {
+    return /\/(?:present|view)(?:\/|$)/.test(location.pathname) && hasPresentationControls();
+  }
+
   function findNavigationButton(label) {
-    const matches = [...document.querySelectorAll('button[aria-label]')]
-      .filter((button) => normalizeAccessibleName(button.getAttribute('aria-label')) === label);
+    const matches = getNavigationControls()
+      .filter((control) => normalizeAccessibleName(control.getAttribute('aria-label')) === label);
     if (matches.length !== 1) return null;
 
-    const [button] = matches;
-    if (button.matches(':disabled') || normalizeAccessibleName(button.getAttribute('aria-disabled')) === 'true') return null;
-    return button;
+    const [control] = matches;
+    if (control.matches(':disabled') || normalizeAccessibleName(control.getAttribute('aria-disabled')) === 'true') return null;
+    return control;
   }
 
   function reportReadiness() {

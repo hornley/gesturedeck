@@ -1,7 +1,7 @@
 # Canva DOM Control Navigation Design
 
 **Date:** 2026-10-19
-**Status:** Approved direction; implementation pending review of this spec.
+**Status:** Implemented; live Canva validation pending.
 
 ## Problem
 
@@ -18,11 +18,11 @@ The earlier Chrome debugger input path was manually verified to advance Canva, b
 
 ## Design
 
-Keep the existing phone, hosted relay, presenter, and extension message flow. In `extension/content/canva-content.js`, map the existing `ArrowLeft` and `ArrowRight` message keys to Canva controls with accessible names `Previous page` and `Next page`. Find controls by their normalized `aria-label`, require one unambiguous enabled match, and call its native `.click()` method. Do not use Canva's private CSS class names, infer slide position, or send content to the phone or relay.
+Keep the existing phone, hosted relay, presenter, and extension message flow. In `extension/content/canva-content.js`, map the existing `ArrowLeft` and `ArrowRight` message keys to Canva controls with accessible names `Previous page` and `Next page`. Find native buttons or `[role="button"]` controls by normalized `aria-label`, require one unambiguous enabled match, and call its `.click()` method. A Present or View route is ready only when at least one of those navigation controls is present; a Canva viewing workspace with page thumbnails alone is not ready. Do not use Canva's private CSS class names, infer slide position, or send content to the phone or relay.
 
 If the presentation route is no longer ready, a control is missing, disabled, ambiguous, or click activation throws, respond with `accepted: false`. A successful `.click()` call means only that the control was activated; it does not prove the rendered slide changed. Update the phone's positive Canva acknowledgement to say “Navigation sent to Canva.” Keep the existing generic acknowledgement for sample decks and PDFs.
 
-The selector evidence is limited: [a public Canva View automation example](https://www.lprp.fr/2024/08/download-canva-view-only-shared-slideshow-as-pdf/) used `button[aria-label="Previous page"]` and `button[aria-label="Next page"]` with `.click()`, but warned that Canva may change its selectors. A live Canva page in the preview browser redirected to sign-in, so current markup has not been confirmed against the user's deck. Treat the labels as a guarded starting point and require a manual Present/View check in Chrome before claiming the issue is fixed.
+The selector evidence is limited: [a public Canva View automation example](https://www.lprp.fr/2024/08/download-canva-view-only-shared-slideshow-as-pdf/) used `button[aria-label="Previous page"]` and `button[aria-label="Next page"]` with `.click()`, but warned that Canva may change its selectors. The user's Canva Viewing workspace showed page items as `div[role="button"]` and exposed no Previous/Next labels, prompting support for accessible role buttons and a stricter readiness check. A live Canva presentation page still needs to be checked in Chrome; require a manual Present/View check before claiming the issue is fixed.
 
 ## Files and release
 

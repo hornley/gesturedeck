@@ -620,12 +620,15 @@ test('extension clears a Canva target after the selected tab reloads without its
   });
 });
 
-test('Canva content script clicks one enabled labeled button on presentation routes', async () => {
+test('Canva content script clicks one enabled labeled control on presentation routes', async () => {
   const source = await readFile(new URL('../extension/content/canva-content.js', import.meta.url), 'utf8');
   const messages = [];
   const handlers = [];
   const location = { pathname: '/design/deck-1/present' };
-  const makeButton = (label, { disabled = false, effectiveDisabled = disabled, ariaDisabled = null, throws = false } = {}) => ({
+  const makeButton = (label, {
+    disabled = false, effectiveDisabled = disabled, ariaDisabled = null, throws = false, roleButton = false,
+  } = {}) => ({
+    tagName: roleButton ? 'DIV' : 'BUTTON',
     disabled,
     clicks: 0,
     matches(selector) {
@@ -635,6 +638,7 @@ test('Canva content script clicks one enabled labeled button on presentation rou
     getAttribute(name) {
       if (name === 'aria-label') return label;
       if (name === 'aria-disabled') return ariaDisabled;
+      if (name === 'role' && roleButton) return 'button';
       return null;
     },
     click() {
@@ -651,7 +655,7 @@ test('Canva content script clicks one enabled labeled button on presentation rou
     } },
     window: { addEventListener() {} },
     document: { querySelectorAll: (selector) => {
-      assert.equal(selector, 'button[aria-label]');
+      assert.equal(selector, 'button[aria-label], [role="button"][aria-label]');
       return buttons;
     } },
   };
@@ -669,6 +673,11 @@ test('Canva content script clicks one enabled labeled button on presentation rou
   buttons = [makeButton('  PREVIOUS\n  page  ')];
   assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowLeft' }) }, { accepted: true, ready: true });
   assert.equal(buttons[0].clicks, 1);
+
+  buttons = [makeButton('Next page', { roleButton: true })];
+  assert.equal(receive({ type: 'probe' }).ready, true);
+  assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, { accepted: true, ready: true });
+  assert.equal(buttons[0].clicks, 1);
   assert.equal(receive({ type: 'keypress', key: 'Home' }), undefined);
 
   for (const unavailableButtons of [
@@ -679,7 +688,12 @@ test('Canva content script clicks one enabled labeled button on presentation rou
     [makeButton('Next page'), makeButton(' Next   page ')],
   ]) {
     buttons = unavailableButtons;
-    assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, { accepted: false, ready: true });
+    assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, {
+      accepted: false, ready: unavailableButtons.some((button) => {
+        const label = String(button.getAttribute('aria-label') ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+        return label === 'previous page' || label === 'next page';
+      }),
+    });
     assert.equal(buttons.reduce((total, button) => total + button.clicks, 0), 0);
   }
 
@@ -687,11 +701,14 @@ test('Canva content script clicks one enabled labeled button on presentation rou
   assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, { accepted: false, ready: true });
   assert.equal(buttons[0].clicks, 1);
 
-  location.pathname = '/design/deck-1/edit';
-  buttons = [makeButton('Previous page')];
+  location.pathname = '/design/deck-1/view';
+  buttons = [makeButton('Page 1', { roleButton: true }), makeButton('Page options')];
   assert.equal(receive({ type: 'probe' }).ready, false);
   const rejected = receive({ type: 'keypress', key: 'ArrowLeft' });
   assert.deepEqual({ ...rejected }, { accepted: false, ready: false });
   assert.equal(buttons[0].clicks, 0);
+  location.pathname = '/design/deck-1/edit';
+  buttons = [makeButton('Previous page')];
+  assert.equal(receive({ type: 'probe' }).ready, false);
   assert.equal(messages.some(({ type }) => type === 'target-readiness'), true);
 });
