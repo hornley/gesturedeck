@@ -750,11 +750,28 @@ test('hosted Redis relay preserves distinct phone pair rejection reasons', async
       },
     },
     {
+      reason: 'host-unavailable',
+      prepare: (fixture) => fixture.redis.del(
+        `gesturedeck:${fixture.pairing.sessionId}:presenter-lease`,
+      ),
+    },
+    {
       reason: 'expired',
       prepare: async (fixture, sessionKey) => {
         const session = await fixture.redis.get(sessionKey);
         session.inviteExpiresAt = 0;
         await fixture.redis.set(sessionKey, session);
+      },
+    },
+    {
+      reason: 'invalid',
+      prepare: (fixture) => {
+        const evalRedis = fixture.redis.eval.bind(fixture.redis);
+        fixture.redis.eval = async (script, keys, args) => (
+          script.includes('-- REDIS_OP:PHONE_PAIR')
+            ? 'unexpected-status'
+            : evalRedis(script, keys, args)
+        );
       },
     },
   ];
@@ -800,8 +817,12 @@ test('hosted Redis relay can renew the shared invite while phones remain paired'
   const second = await fixture.connect('phone');
   second.send({ type: 'pair', invite: renewedInvite, nickname: 'Second phone', deviceType: 'phone' });
   const paired = await second.waitFor('paired');
-  await presenter.waitFor('phones', (message) => message.phones.length === 2);
+  const roster = await presenter.waitFor('phones', (message) => message.phones.length === 2);
   assert.equal(paired.label, 'Second phone');
+  assert.deepEqual(
+    roster.phones.map(({ phoneId }) => phoneId).sort(),
+    [first.paired.phoneId, paired.phoneId].sort(),
+  );
 });
 
 test('hosted Redis relay accepts eight phones on the same invite and rejects a ninth', async (t) => {
