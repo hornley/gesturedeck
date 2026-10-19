@@ -624,7 +624,8 @@ test('Canva content script clicks one enabled labeled control on presentation ro
   const source = await readFile(new URL('../extension/content/canva-content.js', import.meta.url), 'utf8');
   const messages = [];
   const handlers = [];
-  const location = { pathname: '/design/deck-1/present' };
+  const location = { pathname: '/design/deck-1/view' };
+  const windowListeners = new Map();
   const timers = new Map();
   let nextTimerId = 0;
   let observerCallback;
@@ -653,14 +654,14 @@ test('Canva content script clicks one enabled labeled control on presentation ro
       if (throws) throw new Error('click failed');
     },
   });
-  let buttons = [makeButton('Previous page'), makeButton('Next page')];
+  let buttons = [];
   const context = {
     location,
     chrome: { runtime: {
       onMessage: { addListener: (callback) => handlers.push(callback) },
       sendMessage: (message) => { messages.push(message); return Promise.resolve(); },
     } },
-    window: { addEventListener() {} },
+    window: { addEventListener: (name, callback) => windowListeners.set(name, callback) },
     MutationObserver: class {
       constructor(callback) { observerCallback = callback; }
       observe(root, options) { observed = { root, options }; }
@@ -683,6 +684,14 @@ test('Canva content script clicks one enabled labeled control on presentation ro
     handlers[0](message, {}, (value) => { response = value; });
     return response;
   };
+
+  const readinessMessages = () => messages.filter(({ type }) => type === 'target-readiness');
+  assert.equal(readinessMessages()[0]?.ready, false, 'initial readiness on /view without labeled controls should be false');
+  assert.equal(receive({ type: 'probe' }).ready, false);
+  location.pathname = '/design/deck-1/present';
+  buttons = [makeButton('Previous page'), makeButton('Next page')];
+  windowListeners.get('popstate')();
+  assert.equal(readinessMessages()[1]?.ready, true);
 
   assert.equal(receive({ type: 'probe' }).ready, true);
   assert.deepEqual({ ...receive({ type: 'keypress', key: 'ArrowRight' }) }, { accepted: true, ready: true });
