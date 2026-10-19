@@ -503,12 +503,15 @@ function renderTargetStatus() {
 }
 
 function updateCanvaTarget(nextState) {
-  canvaTarget = {
+  const normalizedState = {
     connected: nextState?.connected === true,
     ready: nextState?.connected === true && nextState?.ready === true,
   };
+  const changed = normalizedState.connected !== canvaTarget.connected
+    || normalizedState.ready !== canvaTarget.ready;
+  canvaTarget = normalizedState;
   renderTargetStatus();
-  if (remoteActive && phoneRemoteTarget === 'canva') publishRemoteState();
+  if (changed && remoteActive && phoneRemoteTarget === 'canva') publishRemoteState();
 }
 
 function renderSourceUi() {
@@ -1673,13 +1676,13 @@ void canvaExtensionBridge.requestStatus().then((targetState) => {
   updateCanvaTarget(targetState);
   if (!autoStartCloudPairing) return;
 
-  if (targetState?.connected === true && targetState?.ready === true) {
+  if (targetState?.connected === true) {
     openPairingDialog();
     return;
   }
 
   openPairingDialog({ startCloudSession: false });
-  setPairingStatus('Canva is not ready. Connect a presentation in Present or View mode, then open phone pairing again.');
+  setPairingStatus('Connect Canva in the extension first, then open phone pairing again.');
 });
 
 bindEvents();
