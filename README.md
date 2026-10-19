@@ -35,12 +35,14 @@ The presenter can remove one phone or disconnect everyone. Each phone can discon
 
 ### Use a phone with live Canva
 
-1. In Chrome, open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select this repository's `extension/` folder. Reload the extension after updating it.
-2. Open a Canva design in **Present** or **View** mode. Open the GestureDeck extension and choose **Connect this presentation**.
-3. For local pairing, follow [Use the local phone remote](#use-the-local-phone-remote).
-4. For hosted pairing, choose **Show phone QR/link** in the extension popup. The extension opens the hosted workspace at `https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone`; scan its QR code or copy the link.
+1. In Chrome, open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select this repository's `extension/` folder. Accept Chrome's debugger permission warning, then reload the extension after updating it.
+2. Open the Canva design's `/view` or `/present` tab, and keep the Chrome toolbar visible. Before entering full-screen, open the GestureDeck extension and choose **Connect this presentation**.
+3. Choose **Show phone QR/link** in the extension popup. The extension opens the hosted workspace at `https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone`; scan its QR code or copy the link to pair your phone.
+4. After pairing, return to the same Canva tab and choose **Present**. Keep the hosted workspace open during the session.
 
-The extension does not request camera access. It supports `localhost:5173`, `127.0.0.1:5173`, and the production host above; a self-hosted domain must be added to the extension's origin allowlists. Canva editing mode is refused. If the selected tab leaves Present or View mode, navigation is disabled. Canva does not report slide position or count, so phones show readiness and Previous/Next only. The hosted workspace must stay open during a hosted Canva session.
+For local pairing, connect the Canva tab with the extension while the Chrome toolbar is available, then follow [Use the local phone remote](#use-the-local-phone-remote) to pair your phone. After pairing, return to that same Canva tab and choose **Present**.
+
+The phone's **Previous** and **Next** controls remain unavailable until Canva exposes accessible navigation controls, then become available. Readiness comes from Canva controls labeled “Previous page” or “Next page”; controls can be native buttons or elements with `role="button"`. Canva does not expose slide position or count, so phones show readiness and Previous/Next only. The phone's “Navigation sent to Canva” status confirms Chrome completed the key dispatch while the selected tab remained current; it does not confirm that Canva's slide changed. If Canva changes those labels or markup, navigation may stop working. Check Previous and Next in a signed-in presentation after updating the unpacked extension. Chrome warns that the extension requests its `debugger` permission, and displays Chrome's native debugging banner when the extension attaches to send navigation input. The extension does not request camera access. It supports `localhost:5173`, `127.0.0.1:5173`, and the production host above; a self-hosted domain must be added to the extension's origin allowlists. Canva editing mode is refused.
 
 ### Use the hosted phone remote
 

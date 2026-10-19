@@ -53,11 +53,13 @@ class FakePort {
 
 function fakeChrome(activeTabUrl) {
   const storage = {};
-  const tabMessages = [];
   const injections = [];
+  const debuggerCalls = [];
+  let debuggerFailure;
   const tab = { id: 7, url: activeTabUrl };
   const tabsById = new Map([[tab.id, tab]]);
   let activeTab = tab;
+  let probeReadyOverride;
   const chromeApi = {
     runtime: {
       id: 'extension-id',
@@ -80,22 +82,32 @@ function fakeChrome(activeTabUrl) {
         return selected;
       },
       async sendMessage(tabId, message) {
-        tabMessages.push({ tabId, message });
         const selected = tabsById.get(tabId);
         if (!selected) throw new Error('missing tab');
-        if (message.type === 'probe') return { ready: isCanvaPresentationUrl(selected.url) };
-        if (message.type === 'keypress') return {
-          accepted: isCanvaPresentationUrl(selected.url)
-            && ['ArrowLeft', 'ArrowRight'].includes(message.key),
-          ready: isCanvaPresentationUrl(selected.url),
+        if (message.type === 'probe') return {
+          ready: probeReadyOverride ?? isCanvaPresentationUrl(selected.url),
         };
         return undefined;
       },
     },
     scripting: { async executeScript(details) { injections.push(details); } },
+    debugger: {
+      async attach(target, version) {
+        debuggerCalls.push({ operation: 'attach', target, version });
+        if (debuggerFailure?.operation === 'attach') throw new Error('debugger attach failed');
+      },
+      async sendCommand(target, method, params) {
+        debuggerCalls.push({ operation: 'sendCommand', target, method, params });
+        if (debuggerFailure?.operation === 'sendCommand'
+          && debuggerFailure.type === params.type) throw new Error('debugger command failed');
+      },
+      async detach(target) { debuggerCalls.push({ operation: 'detach', target }); },
+    },
   };
   return {
-    chromeApi, storage, tabMessages, injections, tab, tabsById,
+    chromeApi, storage, injections, debuggerCalls, tab, tabsById,
+    setProbeReady(ready) { probeReadyOverride = ready; },
+    failDebugger(failure) { debuggerFailure = failure; },
     setActiveTab(selected) {
       tabsById.set(selected.id, selected);
       activeTab = selected;
@@ -199,8 +211,9 @@ test('extension protocol allows only loopback controller pages and Canva navigat
 
 test('extension permissions stay limited to the selected tab and approved controller origins', async () => {
   const manifest = JSON.parse(await readFile(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.version, '0.1.1');
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual([...manifest.permissions].sort(), ['activeTab', 'scripting', 'storage']);
+  assert.deepEqual([...manifest.permissions].sort(), ['activeTab', 'debugger', 'scripting', 'storage']);
   assert.deepEqual(manifest.content_scripts[0].matches.sort(), [
     'http://127.0.0.1/*', 'http://localhost/*', 'https://gesturedeck-two.vercel.app/*',
   ]);
@@ -229,31 +242,34 @@ test('popup includes the active tab ID in its Connect request', async () => {
   for (const pending of popup.requests) pending.resolve({ connected: false, ready: false });
 });
 
-test('popup opens hosted phone pairing only for a ready Canva presentation', async () => {
+test('popup opens hosted phone pairing for a connected Canva presentation before it is ready', async () => {
   const popup = await createPopupHarness();
   const pairingButton = popup.elements.get('show-phone-pairing');
   const pairingHint = popup.elements.get('phone-pairing-hint');
+  const pairingUrl = 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone';
 
   popup.requests.find(({ message }) => message.type === 'popup-status')
     .resolve({ connected: true, ready: false });
-  await waitFor(() => popup.elements.get('status').textContent === 'Canva tab selected, but presentation mode is not ready.');
-  assert.equal(pairingButton.disabled, true);
+  await waitFor(() => popup.elements.get('status').textContent
+    === 'Canva tab connected. Start Present to enable phone navigation.');
+  assert.equal(pairingButton.disabled, false);
   assert.equal(pairingHint.hidden, false);
+  assert.equal(pairingHint.textContent, 'Canva tab connected. Start Present to enable phone navigation.');
   pairingButton.listeners.get('click')();
-  assert.deepEqual(popup.openedTabs, []);
+  await waitFor(() => popup.openedTabs.length === 1);
+  assert.deepEqual(popup.openedTabs, [pairingUrl]);
 
   popup.elements.get('connect').listeners.get('click')();
   await waitFor(() => popup.requests.some(({ message }) => message.type === 'popup-connect'));
   popup.requests.find(({ message }) => message.type === 'popup-connect')
     .resolve({ connected: true, ready: true });
-  await waitFor(() => pairingButton.disabled === false);
+  await waitFor(() => popup.elements.get('status').textContent === 'Canva presentation connected.');
+  assert.equal(pairingButton.disabled, false);
   assert.equal(pairingHint.hidden, true);
 
   pairingButton.listeners.get('click')();
-  await waitFor(() => popup.openedTabs.length === 1);
-  assert.deepEqual(popup.openedTabs, [
-    'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
-  ]);
+  await waitFor(() => popup.openedTabs.length === 2);
+  assert.deepEqual(popup.openedTabs, [pairingUrl, pairingUrl]);
 });
 
 test('popup keeps hosted phone pairing disabled while Canva is disconnected', async () => {
@@ -267,6 +283,7 @@ test('popup keeps hosted phone pairing disabled while Canva is disconnected', as
 
   assert.equal(pairingButton.disabled, true);
   assert.equal(pairingHint.hidden, false);
+  assert.equal(pairingHint.textContent, 'Connect a Canva presentation in Present or View mode first.');
 });
 
 test('popup shows the expected message when opening hosted phone pairing fails', async () => {
@@ -407,7 +424,7 @@ test('extension bridge drops stale readiness when status or navigation requests 
   bridge.close();
 });
 
-test('extension sends phone navigation to the selected Canva tab without debugger input', async () => {
+test('extension dispatches phone navigation keys through Chrome debugger on the selected tab', async () => {
   const fake = fakeChrome('https://www.canva.com/design/deck-1/present');
   createCanvaExtensionWorker(fake.chromeApi);
   assert.deepEqual(await connectToActivePopupTab(fake.chromeApi), {
@@ -423,8 +440,17 @@ test('extension sends phone navigation to the selected Canva tab without debugge
     command: 'navigate', action: 'next',
   });
   await waitFor(() => port.sent.some((message) => message.id === 'next-1'));
-  assert.deepEqual(fake.tabMessages.filter(({ message }) => message.type === 'keypress'), [
-    { tabId: 7, message: { type: 'keypress', key: 'ArrowRight' } },
+  assert.deepEqual(fake.debuggerCalls, [
+    { operation: 'attach', target: { tabId: 7 }, version: '1.3' },
+    {
+      operation: 'sendCommand', target: { tabId: 7 }, method: 'Input.dispatchKeyEvent',
+      params: { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 },
+    },
+    {
+      operation: 'sendCommand', target: { tabId: 7 }, method: 'Input.dispatchKeyEvent',
+      params: { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 },
+    },
+    { operation: 'detach', target: { tabId: 7 } },
   ]);
   assert.deepEqual(port.sent.find((message) => message.id === 'next-1'), {
     source: 'gesturedeck-extension', type: 'canva-controller-response',
@@ -436,14 +462,215 @@ test('extension sends phone navigation to the selected Canva tab without debugge
     command: 'navigate', action: 'previous',
   });
   await waitFor(() => port.sent.some((message) => message.id === 'previous-1'));
-  assert.deepEqual(fake.tabMessages.filter(({ message }) => message.type === 'keypress'), [
-    { tabId: 7, message: { type: 'keypress', key: 'ArrowRight' } },
-    { tabId: 7, message: { type: 'keypress', key: 'ArrowLeft' } },
+  assert.deepEqual(fake.debuggerCalls.slice(4), [
+    { operation: 'attach', target: { tabId: 7 }, version: '1.3' },
+    {
+      operation: 'sendCommand', target: { tabId: 7 }, method: 'Input.dispatchKeyEvent',
+      params: { type: 'keyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
+    },
+    {
+      operation: 'sendCommand', target: { tabId: 7 }, method: 'Input.dispatchKeyEvent',
+      params: { type: 'keyUp', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
+    },
+    { operation: 'detach', target: { tabId: 7 } },
   ]);
   assert.deepEqual(port.sent.find((message) => message.id === 'previous-1'), {
     source: 'gesturedeck-extension', type: 'canva-controller-response',
     id: 'previous-1', command: 'navigate', accepted: true,
   });
+});
+
+test('extension rejects navigation when Chrome debugger cannot attach', async () => {
+  const fake = fakeChrome('https://www.canva.com/design/deck-1/present');
+  createCanvaExtensionWorker(fake.chromeApi);
+  await connectToActivePopupTab(fake.chromeApi);
+  const port = new FakePort('controller', { url: 'http://127.0.0.1:5173/' });
+  fake.chromeApi.runtime.onConnect.fire(port);
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'));
+  fake.failDebugger({ operation: 'attach' });
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'attach-failed',
+    command: 'navigate', action: 'next',
+  });
+  await waitFor(() => port.sent.some((message) => message.id === 'attach-failed'));
+
+  assert.deepEqual(fake.debuggerCalls, [
+    { operation: 'attach', target: { tabId: 7 }, version: '1.3' },
+  ]);
+  assert.deepEqual(port.sent.find((message) => message.id === 'attach-failed'), {
+    source: 'gesturedeck-extension', type: 'canva-controller-response',
+    id: 'attach-failed', command: 'navigate', accepted: false,
+  });
+});
+
+test('extension serializes overlapping navigation commands for one Canva tab', async () => {
+  const fake = fakeChrome('https://www.canva.com/design/deck-1/present');
+  createCanvaExtensionWorker(fake.chromeApi);
+  await connectToActivePopupTab(fake.chromeApi);
+  const port = new FakePort('controller', { url: 'http://127.0.0.1:5173/' });
+  fake.chromeApi.runtime.onConnect.fire(port);
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'));
+
+  const firstAttachGate = deferred();
+  const attach = fake.chromeApi.debugger.attach.bind(fake.chromeApi.debugger);
+  let attachCount = 0;
+  let maxConcurrentAttaches = 0;
+  fake.chromeApi.debugger.attach = async (...args) => {
+    attachCount += 1;
+    maxConcurrentAttaches = Math.max(maxConcurrentAttaches, attachCount);
+    try {
+      await firstAttachGate.promise;
+      await attach(...args);
+    } finally {
+      attachCount -= 1;
+    }
+  };
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'overlap-next',
+    command: 'navigate', action: 'next',
+  });
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'overlap-previous',
+    command: 'navigate', action: 'previous',
+  });
+  await waitFor(() => maxConcurrentAttaches > 0);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(maxConcurrentAttaches, 1);
+
+  firstAttachGate.resolve();
+  await waitFor(() => port.sent.some((message) => message.id === 'overlap-next')
+    && port.sent.some((message) => message.id === 'overlap-previous'));
+  assert.equal(maxConcurrentAttaches, 1);
+  assert.deepEqual(fake.debuggerCalls.filter(({ operation, params }) => (
+    operation === 'sendCommand' && params.type === 'keyDown'
+  )).map(({ params }) => params.key), ['ArrowRight', 'ArrowLeft']);
+  assert.equal(fake.debuggerCalls.filter(({ operation }) => operation === 'attach').length, 2);
+  assert.equal(fake.debuggerCalls.filter(({ operation }) => operation === 'detach').length, 2);
+  assert.equal(port.sent.find((message) => message.id === 'overlap-next').accepted, true);
+  assert.equal(port.sent.find((message) => message.id === 'overlap-previous').accepted, true);
+});
+
+test('queued Canva navigation rechecks readiness before and after debugger attach', async () => {
+  const fake = fakeChrome('https://www.canva.com/design/deck-1/present');
+  createCanvaExtensionWorker(fake.chromeApi);
+  await connectToActivePopupTab(fake.chromeApi);
+  const port = new FakePort('controller', { url: 'http://127.0.0.1:5173/' });
+  fake.chromeApi.runtime.onConnect.fire(port);
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'));
+
+  const attachGate = deferred();
+  const attachStarted = deferred();
+  const attach = fake.chromeApi.debugger.attach.bind(fake.chromeApi.debugger);
+  fake.chromeApi.debugger.attach = async (...args) => {
+    attachStarted.resolve();
+    await attachGate.promise;
+    await attach(...args);
+  };
+  const sendMessage = fake.chromeApi.tabs.sendMessage.bind(fake.chromeApi.tabs);
+  let probeCount = 0;
+  fake.chromeApi.tabs.sendMessage = async (tabId, message) => {
+    if (message.type === 'probe') probeCount += 1;
+    return sendMessage(tabId, message);
+  };
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'queued-next',
+    command: 'navigate', action: 'next',
+  });
+  await attachStarted.promise;
+
+  const secondRequestProbeCount = probeCount;
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'queued-previous',
+    command: 'navigate', action: 'previous',
+  });
+  await waitFor(() => probeCount > secondRequestProbeCount);
+  await new Promise((resolve) => setImmediate(resolve));
+  fake.setProbeReady(false);
+  attachGate.resolve();
+
+  await waitFor(() => port.sent.some((message) => message.id === 'queued-next')
+    && port.sent.some((message) => message.id === 'queued-previous'));
+  assert.equal(port.sent.find((message) => message.id === 'queued-next').accepted, false);
+  assert.equal(port.sent.find((message) => message.id === 'queued-previous').accepted, false);
+  assert.deepEqual(fake.debuggerCalls.map(({ operation, params }) => [operation, params?.type]), [
+    ['attach', undefined], ['detach', undefined],
+  ]);
+});
+
+test('extension rejects navigation when key release fails and still detaches debugger', async () => {
+  const fake = fakeChrome('https://www.canva.com/design/deck-1/present');
+  createCanvaExtensionWorker(fake.chromeApi);
+  await connectToActivePopupTab(fake.chromeApi);
+  const port = new FakePort('controller', { url: 'http://127.0.0.1:5173/' });
+  fake.chromeApi.runtime.onConnect.fire(port);
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'));
+  fake.failDebugger({ operation: 'sendCommand', type: 'keyUp' });
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'failed-key-up',
+    command: 'navigate', action: 'previous',
+  });
+  await waitFor(() => port.sent.some((message) => message.id === 'failed-key-up'));
+
+  assert.deepEqual(fake.debuggerCalls.map(({ operation, params }) => [operation, params?.type]), [
+    ['attach', undefined], ['sendCommand', 'keyDown'], ['sendCommand', 'keyUp'],
+    ['sendCommand', 'keyUp'], ['detach', undefined],
+  ]);
+  assert.deepEqual(port.sent.find((message) => message.id === 'failed-key-up'), {
+    source: 'gesturedeck-extension', type: 'canva-controller-response',
+    id: 'failed-key-up', command: 'navigate', accepted: false,
+  });
+});
+
+test('extension connects to a supported Canva tab before navigation controls appear', async () => {
+  const fake = fakeChrome('https://www.canva.com/design/deck-1/view');
+  fake.setProbeReady(false);
+  createCanvaExtensionWorker(fake.chromeApi);
+
+  assert.deepEqual(await connectToActivePopupTab(fake.chromeApi), {
+    connected: true, ready: false,
+  });
+  assert.equal(fake.storage.canvaTabId, 7);
+  assert.deepEqual(fake.injections, [{ target: { tabId: 7 }, files: ['content/canva-content.js'] }]);
+
+  const port = new FakePort('controller', { url: 'http://127.0.0.1:5173/' });
+  fake.chromeApi.runtime.onConnect.fire(port);
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'
+    && message.connected === true && message.ready === false));
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'not-ready-next',
+    command: 'navigate', action: 'next',
+  });
+  await waitFor(() => port.sent.some((message) => message.id === 'not-ready-next'));
+  assert.deepEqual(port.sent.find((message) => message.id === 'not-ready-next'), {
+    source: 'gesturedeck-extension', type: 'canva-controller-response',
+    id: 'not-ready-next', command: 'navigate', accepted: false,
+  });
+  assert.equal(fake.debuggerCalls.length, 0, 'navigation must wait until Canva controls are ready');
+
+  fake.setProbeReady(true);
+  fake.chromeApi.runtime.onMessage.listeners[0]({ type: 'target-readiness', ready: true }, {
+    id: fake.chromeApi.runtime.id,
+    tab: { id: 7 },
+  }, () => {});
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'
+    && message.connected === true && message.ready === true));
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'ready-next',
+    command: 'navigate', action: 'next',
+  });
+  await waitFor(() => port.sent.some((message) => message.id === 'ready-next'));
+  assert.deepEqual(port.sent.find((message) => message.id === 'ready-next'), {
+    source: 'gesturedeck-extension', type: 'canva-controller-response',
+    id: 'ready-next', command: 'navigate', accepted: true,
+  });
+  assert.deepEqual(fake.debuggerCalls.map(({ operation, params }) => [operation, params?.type]), [
+    ['attach', undefined], ['sendCommand', 'keyDown'], ['sendCommand', 'keyUp'], ['detach', undefined],
+  ]);
 });
 
 test('extension connects the tab captured by the popup after the active tab changes', async () => {
@@ -513,10 +740,52 @@ test('extension does not redirect an in-flight command to a newly selected tab',
   delayedTabLookup.resolve(fake.tab);
   await waitFor(() => port.sent.some((message) => message.id === 'old-target-next'));
 
-  assert.equal(fake.tabMessages.some(({ tabId, message }) => tabId === 8 && message.type === 'keypress'), false);
+  assert.equal(fake.debuggerCalls.length, 0, 'a stale command must stop before debugger attachment');
   assert.deepEqual(port.sent.find((message) => message.id === 'old-target-next'), {
     source: 'gesturedeck-extension', type: 'canva-controller-response',
     id: 'old-target-next', command: 'navigate', accepted: false,
+  });
+});
+
+test('extension reports navigation rejected when the target changes during key dispatch', async () => {
+  const fake = fakeChrome('https://www.canva.com/design/deck-1/present');
+  createCanvaExtensionWorker(fake.chromeApi);
+  await connectToActivePopupTab(fake.chromeApi);
+
+  const port = new FakePort('controller', { url: 'http://127.0.0.1:5173/' });
+  fake.chromeApi.runtime.onConnect.fire(port);
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'));
+
+  const keyUpStarted = deferred();
+  const releaseKeyUp = deferred();
+  const sendCommand = fake.chromeApi.debugger.sendCommand.bind(fake.chromeApi.debugger);
+  fake.chromeApi.debugger.sendCommand = async (target, method, params) => {
+    if (params.type === 'keyUp' && target.tabId === 7) {
+      keyUpStarted.resolve();
+      await releaseKeyUp.promise;
+    }
+    return sendCommand(target, method, params);
+  };
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'target-changed-during-dispatch',
+    command: 'navigate', action: 'next',
+  });
+  await keyUpStarted.promise;
+
+  const nextTab = { id: 8, url: 'https://www.canva.com/design/deck-2/present' };
+  fake.setActiveTab(nextTab);
+  assert.deepEqual(await connectToPopupTab(fake.chromeApi, nextTab.id), { connected: true, ready: true });
+  releaseKeyUp.resolve();
+  await waitFor(() => port.sent.some((message) => message.id === 'target-changed-during-dispatch'));
+
+  assert.equal(fake.debuggerCalls.some(({ target }) => target.tabId === 8), false);
+  assert.equal(fake.debuggerCalls.some(({ operation, target }) => (
+    operation === 'detach' && target.tabId === 7
+  )), true);
+  assert.deepEqual(port.sent.find((message) => message.id === 'target-changed-during-dispatch'), {
+    source: 'gesturedeck-extension', type: 'canva-controller-response',
+    id: 'target-changed-during-dispatch', command: 'navigate', accepted: false,
   });
 });
 
@@ -584,7 +853,7 @@ test('a presentation probe started before navigation cannot authorize editor inp
   delayedProbe.resolve({ ready: true });
   await waitFor(() => port.sent.some((message) => message.id === 'navigation-race'));
 
-  assert.equal(fake.tabMessages.some(({ message }) => message.type === 'keypress'), false);
+  assert.equal(fake.debuggerCalls.length, 0);
   assert.deepEqual(port.sent.find((message) => message.id === 'navigation-race'), {
     source: 'gesturedeck-extension', type: 'canva-controller-response',
     id: 'navigation-race', command: 'navigate', accepted: false,
@@ -619,23 +888,54 @@ test('extension clears a Canva target after the selected tab reloads without its
   });
 });
 
-test('Canva content script dispatches arrow keys only on presentation routes', async () => {
+test('Canva content script reports readiness from presentation controls and DOM changes', async () => {
   const source = await readFile(new URL('../extension/content/canva-content.js', import.meta.url), 'utf8');
   const messages = [];
-  const events = [];
   const handlers = [];
-  const location = { pathname: '/design/deck-1/present' };
+  const location = { pathname: '/design/deck-1/view' };
+  const windowListeners = new Map();
+  const timers = new Map();
+  let nextTimerId = 0;
+  let observerCallback;
+  let observed;
+  const makeButton = (label, { disabled = false, ariaDisabled = null, roleButton = false } = {}) => ({
+    tagName: roleButton ? 'DIV' : 'BUTTON',
+    matches(selector) {
+      if (selector === ':disabled') return disabled;
+      if (selector === 'button[aria-label], [role="button"][aria-label]') {
+        return (this.tagName === 'BUTTON' || this.getAttribute('role') === 'button') && Boolean(this.getAttribute('aria-label'));
+      }
+      assert.fail(`Unexpected selector: ${selector}`);
+    },
+    getAttribute(name) {
+      if (name === 'aria-label') return label;
+      if (name === 'aria-disabled') return ariaDisabled;
+      if (name === 'role' && roleButton) return 'button';
+      return null;
+    },
+  });
+  let buttons = [];
   const context = {
     location,
     chrome: { runtime: {
       onMessage: { addListener: (callback) => handlers.push(callback) },
       sendMessage: (message) => { messages.push(message); return Promise.resolve(); },
     } },
-    window: { addEventListener() {} },
-    document: { addEventListener() {}, dispatchEvent: (event) => events.push(event) },
-    KeyboardEvent: class {
-      constructor(type, options) { this.type = type; Object.assign(this, options); }
+    window: { addEventListener: (name, callback) => windowListeners.set(name, callback) },
+    MutationObserver: class {
+      constructor(callback) { observerCallback = callback; }
+      observe(root, options) { observed = { root, options }; }
     },
+    setTimeout(callback, delay) {
+      const id = ++nextTimerId;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
+    document: { querySelectorAll: (selector) => {
+      assert.equal(selector, 'button[aria-label], [role="button"][aria-label]');
+      return buttons.filter((button) => button.matches(selector));
+    }, documentElement: {} },
   };
   context.globalThis = context;
   runInNewContext(source, context);
@@ -645,19 +945,124 @@ test('Canva content script dispatches arrow keys only on presentation routes', a
     return response;
   };
 
-  assert.equal(receive({ type: 'probe' }).ready, true);
-  const dispatched = receive({ type: 'keypress', key: 'ArrowRight' });
-  assert.equal(dispatched.accepted, true);
-  assert.equal(dispatched.ready, true);
-  assert.deepEqual(events.map(({ type, key }) => [type, key]), [
-    ['keydown', 'ArrowRight'], ['keyup', 'ArrowRight'],
-  ]);
-  assert.equal(receive({ type: 'keypress', key: 'Home' }), undefined);
-  location.pathname = '/design/deck-1/edit';
+  const readinessMessages = () => messages.filter(({ type }) => type === 'target-readiness');
+  assert.equal(readinessMessages()[0]?.ready, false, 'initial readiness on /view without labeled controls should be false');
   assert.equal(receive({ type: 'probe' }).ready, false);
-  const rejected = receive({ type: 'keypress', key: 'ArrowLeft' });
-  assert.equal(rejected.accepted, false);
-  assert.equal(rejected.ready, false);
-  assert.equal(events.length, 2);
+  location.pathname = '/design/deck-1/present';
+  buttons = [makeButton('Previous page'), makeButton('Next page')];
+  windowListeners.get('popstate')();
+  assert.equal(readinessMessages()[1]?.ready, true);
+
+  assert.equal(receive({ type: 'probe' }).ready, true);
+  buttons = [makeButton('  PREVIOUS\n  page  ')];
+  assert.equal(receive({ type: 'probe' }).ready, true, 'normalized accessible names count as Canva controls');
+
+  buttons = [makeButton('Next page', { roleButton: true })];
+  assert.equal(receive({ type: 'probe' }).ready, true, 'role=button controls count as Canva controls');
+  buttons = [makeButton('Next page', { disabled: true })];
+  assert.equal(receive({ type: 'probe' }).ready, true, 'readiness follows control presence');
+  buttons = [makeButton('Next page', { ariaDisabled: ' TRUE ' })];
+  assert.equal(receive({ type: 'probe' }).ready, true, 'aria-disabled controls still indicate presentation mode');
+  buttons = [makeButton('Previous page', { disabled: true }), makeButton('Next page')];
+  assert.equal(receive({ type: 'probe' }).ready, true, 'one enabled direction is enough to mark a presentation ready');
+
+  location.pathname = '/design/deck-1/view';
+  buttons = [];
+  assert.equal(receive({ type: 'probe' }).ready, false);
+  windowListeners.get('popstate')();
+  const readinessStart = messages.filter(({ type }) => type === 'target-readiness').length;
+  assert.equal(messages[readinessStart - 1]?.ready, false);
+  assert.equal(observed.root, context.document.documentElement);
+  assert.equal(observed.options.subtree, true);
+  assert.equal(observed.options.childList, true);
+  assert.equal(observed.options.attributes, true);
+  assert.deepEqual(Array.from(observed.options.attributeFilter), ['aria-label', 'aria-disabled', 'disabled', 'role']);
+  assert.equal(observed.options.attributeOldValue, true);
+  assert.equal(typeof observerCallback, 'function');
+  observerCallback([{ type: 'childList', addedNodes: [{}], removedNodes: [] }]);
+  assert.equal(timers.size, 0, 'irrelevant subtree changes should not schedule readiness checks');
+  buttons = [makeButton('Next page')];
+  const nextPageButton = buttons[0];
+  observerCallback([{ type: 'childList', addedNodes: [nextPageButton], removedNodes: [] }]);
+  const firstDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
+  const maxWaitId = [...timers].find(([, timer]) => timer.delay === 500)[0];
+  observerCallback([{ type: 'childList', addedNodes: [{}], removedNodes: [] }]);
+  assert.deepEqual([...timers.keys()].sort(), [firstDebounceId, maxWaitId].sort(), 'irrelevant subtree changes must not reset readiness timers');
+  observerCallback([{ type: 'attributes', target: nextPageButton, attributeName: 'aria-disabled', oldValue: null }]);
+  const replacedDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
+  assert.notEqual(replacedDebounceId, firstDebounceId, 'a relevant mutation should replace the debounce timer');
+  assert.equal([...timers].find(([, timer]) => timer.delay === 500)[0], maxWaitId, 'the max-wait timer should remain bounded');
+  const runTimer = (delay) => {
+    const [id, timer] = [...timers].find(([, candidate]) => candidate.delay === delay) ?? [];
+    assert.notEqual(id, undefined, `expected a ${delay} ms timer`);
+    timers.delete(id);
+    timer.callback();
+  };
+  runTimer(100);
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
+  observerCallback([{ type: 'attributes', target: { tagName: 'DIV', getAttribute: () => 'Toolbar' }, attributeName: 'aria-label', oldValue: 'Toolbar' }]);
+  assert.equal(timers.size, 0, 'irrelevant attribute changes should not schedule readiness checks');
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
+  buttons = [];
+  observerCallback([{ type: 'childList', addedNodes: [], removedNodes: [nextPageButton] }]);
+  runTimer(100);
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false]);
+  const roleControl = {
+    tagName: 'DIV',
+    attributes: { role: 'button', 'aria-label': 'Next page' },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    matches(selector) {
+      if (selector === 'button[aria-label], [role="button"][aria-label]') {
+        return this.attributes.role === 'button' && Boolean(this.attributes['aria-label']);
+      }
+      assert.fail(`Unexpected selector: ${selector}`);
+    },
+    querySelectorAll(selector) {
+      assert.equal(selector, 'button[aria-label], [role="button"][aria-label]');
+      return [];
+    },
+  };
+  buttons = [roleControl];
+  observerCallback([{ type: 'childList', addedNodes: [roleControl], removedNodes: [] }]);
+  const roleControlMaxWaitId = [...timers].find(([, timer]) => timer.delay === 500)[0];
+  let roleControlDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
+  for (let index = 0; index < 4; index += 1) {
+    observerCallback([{ type: 'attributes', target: roleControl, attributeName: 'aria-disabled', oldValue: null }]);
+    const nextDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
+    assert.notEqual(nextDebounceId, roleControlDebounceId, 'continued relevant mutations should keep replacing the trailing timer');
+    roleControlDebounceId = nextDebounceId;
+    assert.equal([...timers].find(([, timer]) => timer.delay === 500)[0], roleControlMaxWaitId);
+  }
+  runTimer(500);
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true]);
+  roleControl.attributes.role = null;
+  observerCallback([
+    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
+  ]);
+  runTimer(100);
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false]);
+  roleControl.attributes.role = 'button';
+  observerCallback([
+    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: null },
+  ]);
+  runTimer(100);
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false, true]);
+  roleControl.attributes.role = null;
+  roleControl.attributes['aria-label'] = null;
+  observerCallback([
+    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
+    { type: 'attributes', target: roleControl, attributeName: 'aria-label', oldValue: 'Next page' },
+  ]);
+  runTimer(100);
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false, true, false]);
+  observerCallback([
+    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
+    { type: 'attributes', target: roleControl, attributeName: 'aria-label', oldValue: 'Next page' },
+  ]);
+  runTimer(100);
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false, true, false]);
+  location.pathname = '/design/deck-1/edit';
+  buttons = [makeButton('Previous page')];
+  assert.equal(receive({ type: 'probe' }).ready, false);
   assert.equal(messages.some(({ type }) => type === 'target-readiness'), true);
 });
