@@ -625,6 +625,10 @@ test('Canva content script clicks one enabled labeled control on presentation ro
   const messages = [];
   const handlers = [];
   const location = { pathname: '/design/deck-1/present' };
+  const timers = new Map();
+  let nextTimerId = 0;
+  let observerCallback;
+  let observed;
   const makeButton = (label, {
     disabled = false, effectiveDisabled = disabled, ariaDisabled = null, throws = false, roleButton = false,
   } = {}) => ({
@@ -654,10 +658,20 @@ test('Canva content script clicks one enabled labeled control on presentation ro
       sendMessage: (message) => { messages.push(message); return Promise.resolve(); },
     } },
     window: { addEventListener() {} },
+    MutationObserver: class {
+      constructor(callback) { observerCallback = callback; }
+      observe(root, options) { observed = { root, options }; }
+    },
+    setTimeout(callback, delay) {
+      const id = ++nextTimerId;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
     document: { querySelectorAll: (selector) => {
       assert.equal(selector, 'button[aria-label], [role="button"][aria-label]');
       return buttons;
-    } },
+    }, documentElement: {} },
   };
   context.globalThis = context;
   runInNewContext(source, context);
@@ -702,8 +716,37 @@ test('Canva content script clicks one enabled labeled control on presentation ro
   assert.equal(buttons[0].clicks, 1);
 
   location.pathname = '/design/deck-1/view';
-  buttons = [makeButton('Page 1', { roleButton: true }), makeButton('Page options')];
+  buttons = [];
   assert.equal(receive({ type: 'probe' }).ready, false);
+  const readinessStart = messages.filter(({ type }) => type === 'target-readiness').length;
+  assert.equal(messages[readinessStart - 1]?.ready, false);
+  assert.equal(observed.root, context.document.documentElement);
+  assert.equal(observed.options.subtree, true);
+  assert.equal(observed.options.childList, true);
+  assert.equal(observed.options.attributes, true);
+  assert.deepEqual(Array.from(observed.options.attributeFilter), ['aria-label', 'aria-disabled', 'disabled']);
+  assert.equal(typeof observerCallback, 'function');
+  buttons = [makeButton('Next page')];
+  observerCallback();
+  observerCallback();
+  const runTimers = () => {
+    const pending = [...timers.values()];
+    timers.clear();
+    pending.forEach(({ callback, delay }) => {
+      assert.equal(delay, 100);
+      callback();
+    });
+  };
+  runTimers();
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
+  observerCallback();
+  runTimers();
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
+  buttons = [];
+  observerCallback();
+  runTimers();
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false]);
+  buttons = [makeButton('Page 1', { roleButton: true }), makeButton('Page options')];
   const rejected = receive({ type: 'keypress', key: 'ArrowLeft' });
   assert.deepEqual({ ...rejected }, { accepted: false, ready: false });
   assert.equal(buttons[0].clicks, 0);

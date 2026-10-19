@@ -31,8 +31,19 @@
     return control;
   }
 
+  let lastReportedReady;
+  let readinessTimer;
+
   function reportReadiness() {
-    void chrome.runtime.sendMessage({ type: 'target-readiness', ready: isPresentationMode() }).catch(() => {});
+    const ready = isPresentationMode();
+    if (ready === lastReportedReady) return;
+    lastReportedReady = ready;
+    void chrome.runtime.sendMessage({ type: 'target-readiness', ready }).catch(() => {});
+  }
+
+  function scheduleReadinessReport() {
+    clearTimeout(readinessTimer);
+    readinessTimer = setTimeout(reportReadiness, 100);
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -63,6 +74,15 @@
 
   for (const eventName of ['popstate', 'hashchange']) {
     window.addEventListener(eventName, reportReadiness);
+  }
+  if (document.documentElement) {
+    const observer = new MutationObserver(scheduleReadinessReport);
+    observer.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['aria-label', 'aria-disabled', 'disabled'],
+    });
   }
   reportReadiness();
 })();
