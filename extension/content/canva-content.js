@@ -30,16 +30,6 @@
     return /\/(?:present|view)(?:\/|$)/.test(location.pathname) && hasPresentationControls();
   }
 
-  function findNavigationButton(label) {
-    const matches = getNavigationControls()
-      .filter((control) => normalizeAccessibleName(control.getAttribute('aria-label')) === label);
-    if (matches.length !== 1) return null;
-
-    const [control] = matches;
-    if (control.matches(':disabled') || normalizeAccessibleName(control.getAttribute('aria-disabled')) === 'true') return null;
-    return control;
-  }
-
   let lastReportedReady;
   let readinessTimer;
   let readinessMaxWaitTimer;
@@ -107,24 +97,6 @@
     if (message?.type === 'probe') {
       sendResponse({ ready: isPresentationMode() });
       return false;
-    }
-    if (message?.type !== 'keypress' || !['ArrowLeft', 'ArrowRight'].includes(message.key)) return false;
-    if (!isPresentationMode()) {
-      reportReadiness();
-      sendResponse({ accepted: false, ready: false });
-      return false;
-    }
-    try {
-      const label = message.key === 'ArrowLeft' ? 'previous page' : 'next page';
-      const button = findNavigationButton(label);
-      if (!button) {
-        sendResponse({ accepted: false, ready: true });
-        return false;
-      }
-      button.click();
-      sendResponse({ accepted: true, ready: true });
-    } catch {
-      sendResponse({ accepted: false, ready: isPresentationMode() });
     }
     return false;
   });
