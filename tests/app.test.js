@@ -700,6 +700,12 @@ test('hosted Canva pairing starts before controls are ready and publishes readin
     assert.equal(extensionRequests.filter(({ command }) => command === 'navigate').length, 0);
     assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'not-ready-next', accepted: false });
 
+    const navigateRequestsBeforePrevious = extensionRequests.filter(({ command }) => command === 'navigate').length;
+    socket.message({ type: 'command', id: 'not-ready-previous', action: 'previous' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(extensionRequests.filter(({ command }) => command === 'navigate').length, navigateRequestsBeforePrevious);
+    assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'not-ready-previous', accepted: false });
+
     publishExtensionState({ connected: true, ready: true });
     assert.deepEqual(socket.sent.at(-1), {
       type: 'state', target: 'canva', ready: true, index: null, total: null, busy: false,
