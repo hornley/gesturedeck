@@ -234,31 +234,34 @@ test('popup includes the active tab ID in its Connect request', async () => {
   for (const pending of popup.requests) pending.resolve({ connected: false, ready: false });
 });
 
-test('popup opens hosted phone pairing only for a ready Canva presentation', async () => {
+test('popup opens hosted phone pairing for a connected Canva presentation before it is ready', async () => {
   const popup = await createPopupHarness();
   const pairingButton = popup.elements.get('show-phone-pairing');
   const pairingHint = popup.elements.get('phone-pairing-hint');
+  const pairingUrl = 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone';
 
   popup.requests.find(({ message }) => message.type === 'popup-status')
     .resolve({ connected: true, ready: false });
-  await waitFor(() => popup.elements.get('status').textContent === 'Canva tab selected, but presentation mode is not ready.');
-  assert.equal(pairingButton.disabled, true);
+  await waitFor(() => popup.elements.get('status').textContent
+    === 'Canva tab connected. Start Present to enable phone navigation.');
+  assert.equal(pairingButton.disabled, false);
   assert.equal(pairingHint.hidden, false);
+  assert.equal(pairingHint.textContent, 'Canva tab connected. Start Present to enable phone navigation.');
   pairingButton.listeners.get('click')();
-  assert.deepEqual(popup.openedTabs, []);
+  await waitFor(() => popup.openedTabs.length === 1);
+  assert.deepEqual(popup.openedTabs, [pairingUrl]);
 
   popup.elements.get('connect').listeners.get('click')();
   await waitFor(() => popup.requests.some(({ message }) => message.type === 'popup-connect'));
   popup.requests.find(({ message }) => message.type === 'popup-connect')
     .resolve({ connected: true, ready: true });
-  await waitFor(() => pairingButton.disabled === false);
+  await waitFor(() => popup.elements.get('status').textContent === 'Canva presentation connected.');
+  assert.equal(pairingButton.disabled, false);
   assert.equal(pairingHint.hidden, true);
 
   pairingButton.listeners.get('click')();
-  await waitFor(() => popup.openedTabs.length === 1);
-  assert.deepEqual(popup.openedTabs, [
-    'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
-  ]);
+  await waitFor(() => popup.openedTabs.length === 2);
+  assert.deepEqual(popup.openedTabs, [pairingUrl, pairingUrl]);
 });
 
 test('popup keeps hosted phone pairing disabled while Canva is disconnected', async () => {
@@ -272,6 +275,7 @@ test('popup keeps hosted phone pairing disabled while Canva is disconnected', as
 
   assert.equal(pairingButton.disabled, true);
   assert.equal(pairingHint.hidden, false);
+  assert.equal(pairingHint.textContent, 'Connect a Canva presentation in Present or View mode first.');
 });
 
 test('popup shows the expected message when opening hosted phone pairing fails', async () => {

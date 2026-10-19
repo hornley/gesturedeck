@@ -4,6 +4,8 @@ const disconnect = document.getElementById('disconnect');
 const showPhonePairing = document.getElementById('show-phone-pairing');
 const phonePairingHint = document.getElementById('phone-pairing-hint');
 const hostedPairingUrl = 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone';
+const disconnectedPairingHint = 'Connect a Canva presentation in Present or View mode first.';
+const waitingPairingHint = 'Canva tab connected. Start Present to enable phone navigation.';
 let currentState = { connected: false, ready: false };
 let requestGeneration = 0;
 
@@ -13,8 +15,9 @@ function render(state, error) {
     ready: state?.ready === true,
   };
   const { connected, ready } = currentState;
-  showPhonePairing.disabled = !connected || !ready;
+  showPhonePairing.disabled = !connected;
   phonePairingHint.hidden = ready;
+  phonePairingHint.textContent = connected && !ready ? waitingPairingHint : disconnectedPairingHint;
   status.textContent = error === 'presentation-required'
     ? 'Open a Canva presentation in Present or View mode, then connect again.'
     : error === 'canva-unavailable'
@@ -22,13 +25,13 @@ function render(state, error) {
       : ready
         ? 'Canva presentation connected.'
         : connected
-          ? 'Canva tab selected, but presentation mode is not ready.'
+          ? waitingPairingHint
           : 'No Canva presentation connected.';
   disconnect.hidden = !connected;
 }
 
 async function openHostedPhonePairing() {
-  if (!currentState.connected || !currentState.ready) return;
+  if (!currentState.connected) return;
   try {
     await chrome.tabs.create({ url: hostedPairingUrl });
   } catch {
