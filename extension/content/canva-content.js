@@ -63,20 +63,28 @@
   }
 
   function hasRelevantReadinessMutation(records) {
-    return records.some((record) => {
+    if (records.some((record) => {
       if (record.type === 'childList') {
         return [...record.addedNodes, ...record.removedNodes].some(containsRelevantNavigationControl);
       }
-      if (record.type !== 'attributes') return false;
-      const { target, attributeName, oldValue } = record;
-      if (attributeName === 'aria-label') {
-        return isRelevantNavigationControl(target, oldValue) || isRelevantNavigationControl(target);
-      }
-      if (attributeName === 'role') {
-        return (normalizeAccessibleName(oldValue) === 'button' || normalizeAccessibleName(target.getAttribute('role')) === 'button')
-          && isNavigationLabel(target.getAttribute('aria-label'));
-      }
-      return ['aria-disabled', 'disabled'].includes(attributeName) && isRelevantNavigationControl(target);
+      return false;
+    })) return true;
+
+    const attributeMutations = new Map();
+    for (const record of records) {
+      if (record.type !== 'attributes') continue;
+      const mutations = attributeMutations.get(record.target) ?? [];
+      mutations.push(record);
+      attributeMutations.set(record.target, mutations);
+    }
+
+    return [...attributeMutations].some(([target, mutations]) => {
+      const oldValueFor = (attributeName) => mutations.find((record) => record.attributeName === attributeName)?.oldValue;
+      const previousLabel = oldValueFor('aria-label') ?? target.getAttribute('aria-label');
+      const previousRole = oldValueFor('role') ?? target.getAttribute('role');
+      const wasRelevantControl = isNavigationLabel(previousLabel)
+        && (target.tagName === 'BUTTON' || normalizeAccessibleName(previousRole) === 'button');
+      return isRelevantNavigationControl(target) || wasRelevantControl;
     });
   }
 

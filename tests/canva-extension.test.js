@@ -758,6 +758,36 @@ test('Canva content script clicks one enabled labeled control on presentation ro
   observerCallback([{ type: 'childList', addedNodes: [], removedNodes: [nextPageButton] }]);
   runTimers();
   assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false]);
+  const roleControl = {
+    tagName: 'DIV',
+    attributes: { role: 'button', 'aria-label': 'Next page' },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    matches(selector) {
+      if (selector === 'button[aria-label], [role="button"][aria-label]') {
+        return this.attributes.role === 'button' && Boolean(this.attributes['aria-label']);
+      }
+      assert.fail(`Unexpected selector: ${selector}`);
+    },
+    querySelectorAll() { return []; },
+  };
+  buttons = [roleControl];
+  observerCallback([{ type: 'childList', addedNodes: [roleControl], removedNodes: [] }]);
+  runTimers();
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true]);
+  roleControl.attributes.role = null;
+  roleControl.attributes['aria-label'] = null;
+  observerCallback([
+    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
+    { type: 'attributes', target: roleControl, attributeName: 'aria-label', oldValue: 'Next page' },
+  ]);
+  runTimers();
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false]);
+  observerCallback([
+    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
+    { type: 'attributes', target: roleControl, attributeName: 'aria-label', oldValue: 'Next page' },
+  ]);
+  runTimers();
+  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false]);
   buttons = [makeButton('Page 1', { roleButton: true }), makeButton('Page options')];
   const rejected = receive({ type: 'keypress', key: 'ArrowLeft' });
   assert.deepEqual({ ...rejected }, { accepted: false, ready: false });
