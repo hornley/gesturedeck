@@ -681,6 +681,7 @@ test('hosted Canva pairing starts before controls are ready and publishes readin
 
     const startCall = calls.find(({ url }) => url === '/api/cloud-remote/start');
     assert.ok(startCall, 'a connected Canva tab can create a hosted phone session before controls appear');
+    assert.equal(startCall.options.method, 'POST');
     assert.deepEqual(startCall.body, {
       state: { target: 'canva', ready: false, index: null, total: null, busy: false },
     });
@@ -713,6 +714,24 @@ test('hosted Canva pairing starts before controls are ready and publishes readin
     });
     publishExtensionState({ connected: false, ready: false });
     assert.equal(socket.sent.filter(({ type }) => type === 'state').length, statesAfterDisconnect.length);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('hosted startup with Canva disconnected opens pairing without starting a session', async () => {
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: false, ready: false },
+  });
+  const { elements, calls } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(elements.get('pairing-dialog').open, true);
+    assert.equal(elements.get('pairing-status').textContent,
+      'Connect Canva in the extension first, then open phone pairing again.');
+    assert.equal(calls.some(({ url }) => url === '/api/cloud-remote/start'), false);
   } finally {
     harness.restore();
   }
