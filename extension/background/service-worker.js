@@ -95,8 +95,8 @@ export function createCanvaExtensionWorker(chromeApi) {
       if (attempt !== connectionAttempt) return getTargetState();
       const result = await chromeApi.tabs.sendMessage(tab.id, { type: 'probe' });
       if (attempt !== connectionAttempt) return getTargetState();
-      if (result?.ready !== true) {
-        return { ...(await getTargetState()), error: 'presentation-required' };
+      if (typeof result?.ready !== 'boolean') {
+        return { ...(await getTargetState()), error: 'canva-unavailable' };
       }
       const previousTabId = targetTabId;
       const previousTargetLoading = targetLoading;

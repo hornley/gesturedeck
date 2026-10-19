@@ -58,6 +58,7 @@ function fakeChrome(activeTabUrl) {
   const tab = { id: 7, url: activeTabUrl };
   const tabsById = new Map([[tab.id, tab]]);
   let activeTab = tab;
+  let probeReadyOverride;
   const chromeApi = {
     runtime: {
       id: 'extension-id',
@@ -83,7 +84,9 @@ function fakeChrome(activeTabUrl) {
         tabMessages.push({ tabId, message });
         const selected = tabsById.get(tabId);
         if (!selected) throw new Error('missing tab');
-        if (message.type === 'probe') return { ready: isCanvaPresentationUrl(selected.url) };
+        if (message.type === 'probe') return {
+          ready: probeReadyOverride ?? isCanvaPresentationUrl(selected.url),
+        };
         if (message.type === 'keypress') return {
           accepted: isCanvaPresentationUrl(selected.url)
             && ['ArrowLeft', 'ArrowRight'].includes(message.key),
@@ -96,6 +99,7 @@ function fakeChrome(activeTabUrl) {
   };
   return {
     chromeApi, storage, tabMessages, injections, tab, tabsById,
+    setProbeReady(ready) { probeReadyOverride = ready; },
     setActiveTab(selected) {
       tabsById.set(selected.id, selected);
       activeTab = selected;
@@ -445,6 +449,55 @@ test('extension sends phone navigation to the selected Canva tab without debugge
     source: 'gesturedeck-extension', type: 'canva-controller-response',
     id: 'previous-1', command: 'navigate', accepted: true,
   });
+});
+
+test('extension connects to a supported Canva tab before navigation controls appear', async () => {
+  const fake = fakeChrome('https://www.canva.com/design/deck-1/view');
+  fake.setProbeReady(false);
+  createCanvaExtensionWorker(fake.chromeApi);
+
+  assert.deepEqual(await connectToActivePopupTab(fake.chromeApi), {
+    connected: true, ready: false,
+  });
+  assert.equal(fake.storage.canvaTabId, 7);
+  assert.deepEqual(fake.injections, [{ target: { tabId: 7 }, files: ['content/canva-content.js'] }]);
+
+  const port = new FakePort('controller', { url: 'http://127.0.0.1:5173/' });
+  fake.chromeApi.runtime.onConnect.fire(port);
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'
+    && message.connected === true && message.ready === false));
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'not-ready-next',
+    command: 'navigate', action: 'next',
+  });
+  await waitFor(() => port.sent.some((message) => message.id === 'not-ready-next'));
+  assert.deepEqual(port.sent.find((message) => message.id === 'not-ready-next'), {
+    source: 'gesturedeck-extension', type: 'canva-controller-response',
+    id: 'not-ready-next', command: 'navigate', accepted: false,
+  });
+  assert.equal(fake.tabMessages.some(({ message }) => message.type === 'keypress'), false);
+
+  fake.setProbeReady(true);
+  fake.chromeApi.runtime.onMessage.listeners[0]({ type: 'target-readiness', ready: true }, {
+    id: fake.chromeApi.runtime.id,
+    tab: { id: 7 },
+  }, () => {});
+  await waitFor(() => port.sent.some((message) => message.type === 'canva-target-state'
+    && message.connected === true && message.ready === true));
+
+  port.onMessage.fire({
+    source: 'gesturedeck', type: 'canva-controller-request', id: 'ready-next',
+    command: 'navigate', action: 'next',
+  });
+  await waitFor(() => port.sent.some((message) => message.id === 'ready-next'));
+  assert.deepEqual(port.sent.find((message) => message.id === 'ready-next'), {
+    source: 'gesturedeck-extension', type: 'canva-controller-response',
+    id: 'ready-next', command: 'navigate', accepted: true,
+  });
+  assert.deepEqual(fake.tabMessages.filter(({ message }) => message.type === 'keypress'), [
+    { tabId: 7, message: { type: 'keypress', key: 'ArrowRight' } },
+  ]);
 });
 
 test('extension connects the tab captured by the popup after the active tab changes', async () => {
