@@ -46,6 +46,44 @@
     readinessTimer = setTimeout(reportReadiness, 100);
   }
 
+  function isNavigationLabel(value) {
+    const label = normalizeAccessibleName(value);
+    return label === 'previous page' || label === 'next page';
+  }
+
+  function isRelevantNavigationControl(control, label = control?.getAttribute?.('aria-label')) {
+    if (!control || !isNavigationLabel(label)) return false;
+    return control.tagName === 'BUTTON' || normalizeAccessibleName(control.getAttribute('role')) === 'button';
+  }
+
+  function containsRelevantNavigationControl(node) {
+    if (isRelevantNavigationControl(node)) return true;
+    return [...(node?.querySelectorAll?.('button[aria-label], [role="button"][aria-label]') ?? [])]
+      .some((control) => isRelevantNavigationControl(control));
+  }
+
+  function hasRelevantReadinessMutation(records) {
+    return records.some((record) => {
+      if (record.type === 'childList') {
+        return [...record.addedNodes, ...record.removedNodes].some(containsRelevantNavigationControl);
+      }
+      if (record.type !== 'attributes') return false;
+      const { target, attributeName, oldValue } = record;
+      if (attributeName === 'aria-label') {
+        return isRelevantNavigationControl(target, oldValue) || isRelevantNavigationControl(target);
+      }
+      if (attributeName === 'role') {
+        return (normalizeAccessibleName(oldValue) === 'button' || normalizeAccessibleName(target.getAttribute('role')) === 'button')
+          && isNavigationLabel(target.getAttribute('aria-label'));
+      }
+      return ['aria-disabled', 'disabled'].includes(attributeName) && isRelevantNavigationControl(target);
+    });
+  }
+
+  function handleReadinessMutations(records) {
+    if (hasRelevantReadinessMutation(records)) scheduleReadinessReport();
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'probe') {
       sendResponse({ ready: isPresentationMode() });
@@ -76,12 +114,13 @@
     window.addEventListener(eventName, reportReadiness);
   }
   if (document.documentElement) {
-    const observer = new MutationObserver(scheduleReadinessReport);
+    const observer = new MutationObserver(handleReadinessMutations);
     observer.observe(document.documentElement, {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ['aria-label', 'aria-disabled', 'disabled'],
+      attributeFilter: ['aria-label', 'aria-disabled', 'disabled', 'role'],
+      attributeOldValue: true,
     });
   }
   reportReadiness();

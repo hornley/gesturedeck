@@ -636,8 +636,11 @@ test('Canva content script clicks one enabled labeled control on presentation ro
     disabled,
     clicks: 0,
     matches(selector) {
-      assert.equal(selector, ':disabled');
-      return effectiveDisabled;
+      if (selector === ':disabled') return effectiveDisabled;
+      if (selector === 'button[aria-label], [role="button"][aria-label]') {
+        return (this.tagName === 'BUTTON' || roleButton) && Boolean(label);
+      }
+      assert.fail(`Unexpected selector: ${selector}`);
     },
     getAttribute(name) {
       if (name === 'aria-label') return label;
@@ -724,11 +727,20 @@ test('Canva content script clicks one enabled labeled control on presentation ro
   assert.equal(observed.options.subtree, true);
   assert.equal(observed.options.childList, true);
   assert.equal(observed.options.attributes, true);
-  assert.deepEqual(Array.from(observed.options.attributeFilter), ['aria-label', 'aria-disabled', 'disabled']);
+  assert.deepEqual(Array.from(observed.options.attributeFilter), ['aria-label', 'aria-disabled', 'disabled', 'role']);
+  assert.equal(observed.options.attributeOldValue, true);
   assert.equal(typeof observerCallback, 'function');
+  observerCallback([{ type: 'childList', addedNodes: [{}], removedNodes: [] }]);
+  assert.equal(timers.size, 0, 'irrelevant subtree changes should not schedule readiness checks');
   buttons = [makeButton('Next page')];
-  observerCallback();
-  observerCallback();
+  const nextPageButton = buttons[0];
+  observerCallback([{ type: 'childList', addedNodes: [nextPageButton], removedNodes: [] }]);
+  const firstTimerId = [...timers.keys()][0];
+  observerCallback([{ type: 'childList', addedNodes: [{}], removedNodes: [] }]);
+  assert.deepEqual([...timers.keys()], [firstTimerId], 'irrelevant subtree changes must not reset the debounce timer');
+  observerCallback([{ type: 'childList', addedNodes: [], removedNodes: [nextPageButton] }]);
+  buttons = [nextPageButton];
+  assert.equal(timers.size, 1, 'relevant changes should replace the prior debounce timer');
   const runTimers = () => {
     const pending = [...timers.values()];
     timers.clear();
@@ -739,11 +751,11 @@ test('Canva content script clicks one enabled labeled control on presentation ro
   };
   runTimers();
   assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
-  observerCallback();
-  runTimers();
+  observerCallback([{ type: 'attributes', target: { tagName: 'DIV', getAttribute: () => 'Toolbar' }, attributeName: 'aria-label', oldValue: 'Toolbar' }]);
+  assert.equal(timers.size, 0, 'irrelevant attribute changes should not schedule readiness checks');
   assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
   buttons = [];
-  observerCallback();
+  observerCallback([{ type: 'childList', addedNodes: [], removedNodes: [nextPageButton] }]);
   runTimers();
   assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false]);
   buttons = [makeButton('Page 1', { roleButton: true }), makeButton('Page options')];
