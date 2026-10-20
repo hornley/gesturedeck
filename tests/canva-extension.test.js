@@ -888,33 +888,12 @@ test('extension clears a Canva target after the selected tab reloads without its
   });
 });
 
-test('Canva content script reports readiness from presentation controls and DOM changes', async () => {
+test('Canva content script treats Present and View routes as ready by URL', async () => {
   const source = await readFile(new URL('../extension/content/canva-content.js', import.meta.url), 'utf8');
   const messages = [];
   const handlers = [];
   const location = { pathname: '/design/deck-1/view' };
   const windowListeners = new Map();
-  const timers = new Map();
-  let nextTimerId = 0;
-  let observerCallback;
-  let observed;
-  const makeButton = (label, { disabled = false, ariaDisabled = null, roleButton = false } = {}) => ({
-    tagName: roleButton ? 'DIV' : 'BUTTON',
-    matches(selector) {
-      if (selector === ':disabled') return disabled;
-      if (selector === 'button[aria-label], [role="button"][aria-label]') {
-        return (this.tagName === 'BUTTON' || this.getAttribute('role') === 'button') && Boolean(this.getAttribute('aria-label'));
-      }
-      assert.fail(`Unexpected selector: ${selector}`);
-    },
-    getAttribute(name) {
-      if (name === 'aria-label') return label;
-      if (name === 'aria-disabled') return ariaDisabled;
-      if (name === 'role' && roleButton) return 'button';
-      return null;
-    },
-  });
-  let buttons = [];
   const context = {
     location,
     chrome: { runtime: {
@@ -922,20 +901,6 @@ test('Canva content script reports readiness from presentation controls and DOM 
       sendMessage: (message) => { messages.push(message); return Promise.resolve(); },
     } },
     window: { addEventListener: (name, callback) => windowListeners.set(name, callback) },
-    MutationObserver: class {
-      constructor(callback) { observerCallback = callback; }
-      observe(root, options) { observed = { root, options }; }
-    },
-    setTimeout(callback, delay) {
-      const id = ++nextTimerId;
-      timers.set(id, { callback, delay });
-      return id;
-    },
-    clearTimeout(id) { timers.delete(id); },
-    document: { querySelectorAll: (selector) => {
-      assert.equal(selector, 'button[aria-label], [role="button"][aria-label]');
-      return buttons.filter((button) => button.matches(selector));
-    }, documentElement: {} },
   };
   context.globalThis = context;
   runInNewContext(source, context);
@@ -944,125 +909,14 @@ test('Canva content script reports readiness from presentation controls and DOM 
     handlers[0](message, {}, (value) => { response = value; });
     return response;
   };
+  const readiness = () => messages.filter(({ type }) => type === 'target-readiness').map(({ ready }) => ready);
 
-  const readinessMessages = () => messages.filter(({ type }) => type === 'target-readiness');
-  assert.equal(readinessMessages()[0]?.ready, false, 'initial readiness on /view without labeled controls should be false');
-  assert.equal(receive({ type: 'probe' }).ready, false);
-  location.pathname = '/design/deck-1/present';
-  buttons = [makeButton('Previous page'), makeButton('Next page')];
-  windowListeners.get('popstate')();
-  assert.equal(readinessMessages()[1]?.ready, true);
-
+  assert.deepEqual(readiness(), [true]);
   assert.equal(receive({ type: 'probe' }).ready, true);
-  buttons = [makeButton('  PREVIOUS\n  page  ')];
-  assert.equal(receive({ type: 'probe' }).ready, true, 'normalized accessible names count as Canva controls');
-
-  buttons = [makeButton('Next page', { roleButton: true })];
-  assert.equal(receive({ type: 'probe' }).ready, true, 'role=button controls count as Canva controls');
-  buttons = [makeButton('Next page', { disabled: true })];
-  assert.equal(receive({ type: 'probe' }).ready, true, 'readiness follows control presence');
-  buttons = [makeButton('Next page', { ariaDisabled: ' TRUE ' })];
-  assert.equal(receive({ type: 'probe' }).ready, true, 'aria-disabled controls still indicate presentation mode');
-  buttons = [makeButton('Previous page', { disabled: true }), makeButton('Next page')];
-  assert.equal(receive({ type: 'probe' }).ready, true, 'one enabled direction is enough to mark a presentation ready');
-
-  location.pathname = '/design/deck-1/view';
-  buttons = [];
+  location.pathname = '/design/deck-1/present';
+  assert.equal(receive({ type: 'probe' }).ready, true);
+  location.pathname = '/design/deck-1/edit';
   assert.equal(receive({ type: 'probe' }).ready, false);
   windowListeners.get('popstate')();
-  const readinessStart = messages.filter(({ type }) => type === 'target-readiness').length;
-  assert.equal(messages[readinessStart - 1]?.ready, false);
-  assert.equal(observed.root, context.document.documentElement);
-  assert.equal(observed.options.subtree, true);
-  assert.equal(observed.options.childList, true);
-  assert.equal(observed.options.attributes, true);
-  assert.deepEqual(Array.from(observed.options.attributeFilter), ['aria-label', 'aria-disabled', 'disabled', 'role']);
-  assert.equal(observed.options.attributeOldValue, true);
-  assert.equal(typeof observerCallback, 'function');
-  observerCallback([{ type: 'childList', addedNodes: [{}], removedNodes: [] }]);
-  assert.equal(timers.size, 0, 'irrelevant subtree changes should not schedule readiness checks');
-  buttons = [makeButton('Next page')];
-  const nextPageButton = buttons[0];
-  observerCallback([{ type: 'childList', addedNodes: [nextPageButton], removedNodes: [] }]);
-  const firstDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
-  const maxWaitId = [...timers].find(([, timer]) => timer.delay === 500)[0];
-  observerCallback([{ type: 'childList', addedNodes: [{}], removedNodes: [] }]);
-  assert.deepEqual([...timers.keys()].sort(), [firstDebounceId, maxWaitId].sort(), 'irrelevant subtree changes must not reset readiness timers');
-  observerCallback([{ type: 'attributes', target: nextPageButton, attributeName: 'aria-disabled', oldValue: null }]);
-  const replacedDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
-  assert.notEqual(replacedDebounceId, firstDebounceId, 'a relevant mutation should replace the debounce timer');
-  assert.equal([...timers].find(([, timer]) => timer.delay === 500)[0], maxWaitId, 'the max-wait timer should remain bounded');
-  const runTimer = (delay) => {
-    const [id, timer] = [...timers].find(([, candidate]) => candidate.delay === delay) ?? [];
-    assert.notEqual(id, undefined, `expected a ${delay} ms timer`);
-    timers.delete(id);
-    timer.callback();
-  };
-  runTimer(100);
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
-  observerCallback([{ type: 'attributes', target: { tagName: 'DIV', getAttribute: () => 'Toolbar' }, attributeName: 'aria-label', oldValue: 'Toolbar' }]);
-  assert.equal(timers.size, 0, 'irrelevant attribute changes should not schedule readiness checks');
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true]);
-  buttons = [];
-  observerCallback([{ type: 'childList', addedNodes: [], removedNodes: [nextPageButton] }]);
-  runTimer(100);
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false]);
-  const roleControl = {
-    tagName: 'DIV',
-    attributes: { role: 'button', 'aria-label': 'Next page' },
-    getAttribute(name) { return this.attributes[name] ?? null; },
-    matches(selector) {
-      if (selector === 'button[aria-label], [role="button"][aria-label]') {
-        return this.attributes.role === 'button' && Boolean(this.attributes['aria-label']);
-      }
-      assert.fail(`Unexpected selector: ${selector}`);
-    },
-    querySelectorAll(selector) {
-      assert.equal(selector, 'button[aria-label], [role="button"][aria-label]');
-      return [];
-    },
-  };
-  buttons = [roleControl];
-  observerCallback([{ type: 'childList', addedNodes: [roleControl], removedNodes: [] }]);
-  const roleControlMaxWaitId = [...timers].find(([, timer]) => timer.delay === 500)[0];
-  let roleControlDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
-  for (let index = 0; index < 4; index += 1) {
-    observerCallback([{ type: 'attributes', target: roleControl, attributeName: 'aria-disabled', oldValue: null }]);
-    const nextDebounceId = [...timers].find(([, timer]) => timer.delay === 100)[0];
-    assert.notEqual(nextDebounceId, roleControlDebounceId, 'continued relevant mutations should keep replacing the trailing timer');
-    roleControlDebounceId = nextDebounceId;
-    assert.equal([...timers].find(([, timer]) => timer.delay === 500)[0], roleControlMaxWaitId);
-  }
-  runTimer(500);
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true]);
-  roleControl.attributes.role = null;
-  observerCallback([
-    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
-  ]);
-  runTimer(100);
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false]);
-  roleControl.attributes.role = 'button';
-  observerCallback([
-    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: null },
-  ]);
-  runTimer(100);
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false, true]);
-  roleControl.attributes.role = null;
-  roleControl.attributes['aria-label'] = null;
-  observerCallback([
-    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
-    { type: 'attributes', target: roleControl, attributeName: 'aria-label', oldValue: 'Next page' },
-  ]);
-  runTimer(100);
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false, true, false]);
-  observerCallback([
-    { type: 'attributes', target: roleControl, attributeName: 'role', oldValue: 'button' },
-    { type: 'attributes', target: roleControl, attributeName: 'aria-label', oldValue: 'Next page' },
-  ]);
-  runTimer(100);
-  assert.deepEqual(messages.filter(({ type }) => type === 'target-readiness').slice(readinessStart).map(({ ready }) => ready), [true, false, true, false, true, false]);
-  location.pathname = '/design/deck-1/edit';
-  buttons = [makeButton('Previous page')];
-  assert.equal(receive({ type: 'probe' }).ready, false);
-  assert.equal(messages.some(({ type }) => type === 'target-readiness'), true);
+  assert.deepEqual(readiness(), [true, false]);
 });
