@@ -792,6 +792,7 @@ test('hosted Redis relay ignores a stale initial availability read after present
   for (const mode of ['pair', 'resume']) {
     const fixture = await createFixture();
     let releaseRead = () => {};
+    let readTimeout;
     try {
       const presenter = await fixture.presenter();
       let credential;
@@ -822,7 +823,9 @@ test('hosted Redis relay ignores a stale initial availability read after present
         ? { type: 'pair', invite: fixture.pairing.fallbackUrl.split('#')[1], deviceType: 'phone' }
         : { type: 'resume', credential });
       await phone.waitFor(mode === 'pair' ? 'paired' : 'resumed');
-      await readCaptured;
+      await Promise.race([readCaptured, new Promise((_, reject) => {
+        readTimeout = setTimeout(() => reject(new Error(`Timed out waiting for ${mode} availability read`)), 3_000);
+      })]);
       await presenter.close();
       assert.deepEqual(await phone.waitFor('presenterStatus', (message) => !message.available), {
         type: 'presenterStatus', available: false,
@@ -831,6 +834,7 @@ test('hosted Redis relay ignores a stale initial availability read after present
       await assert.rejects(phone.waitFor('presenterStatus', (message) => message.available, 100),
         /Timed out waiting for presenterStatus/, mode);
     } finally {
+      clearTimeout(readTimeout);
       releaseRead();
       await fixture.close();
     }
