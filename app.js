@@ -159,6 +159,7 @@ let remoteActive = false;
 let remoteStarting = false;
 let remoteAuthenticated = false;
 let remoteReconnecting = false;
+let pairingInviteRenewing = false;
 let presenterConnectionRejected = false;
 let remoteGeneration = 0;
 // Keep stop requests distinct across replacements and coalesce duplicates for one session.
@@ -811,6 +812,7 @@ function resetPairingUi() {
   remoteStarting = false;
   remoteAuthenticated = false;
   remoteReconnecting = false;
+  pairingInviteRenewing = false;
   presenterConnectionRejected = false;
   phoneRemoteTarget = null;
   pairingInviteExpired = false;
@@ -894,7 +896,7 @@ function handleMobileRemoteConnection(event, generation) {
     remoteReconnecting = false;
     revealPairingMaterial();
     setText(elements.newPairingLink, pairingInviteExpired ? 'New pairing link' : 'Renew pairing link');
-    show(elements.newPairingLink, true);
+    show(elements.newPairingLink, !pairingInviteRenewing);
     setPairingStatus(pairingInviteExpired
       ? 'Pairing link expired. Create a new pairing link to continue.'
       : 'Waiting for your phone to connect');
@@ -920,7 +922,7 @@ function handleMobileRemoteConnection(event, generation) {
     pairingInviteExpired = true;
     clearPairingMaterial();
     setText(elements.newPairingLink, 'New pairing link');
-    show(elements.newPairingLink, true);
+    show(elements.newPairingLink, !pairingInviteRenewing);
     setPairingStatus('Pairing link expired. Create a new pairing link to continue.');
     return;
   }
@@ -959,6 +961,7 @@ async function startMobileRemote() {
   activeRemoteSessionKey += 1;
   remoteStarting = true;
   remoteReconnecting = false;
+  pairingInviteRenewing = false;
   pairedPhones = [];
   pairingInviteExpired = false;
   updatePairingStartButton();
@@ -1026,6 +1029,7 @@ async function startCloudMobileRemote() {
   activeRemoteSessionKey += 1;
   remoteStarting = true;
   remoteReconnecting = false;
+  pairingInviteRenewing = false;
   updatePairingStartButton();
   show(elements.newPairingLink, false);
   clearPairingMaterial();
@@ -1100,7 +1104,8 @@ async function startCloudMobileRemote() {
 }
 
 async function renewPairingInvite() {
-  if (!remoteActive || !remoteAuthenticated) return;
+  if (!remoteActive || !remoteAuthenticated || pairingInviteRenewing) return;
+  pairingInviteRenewing = true;
   show(elements.newPairingLink, false);
   setPairingStatus('Creating a new pairing link…');
   const generation = remoteGeneration;
@@ -1118,13 +1123,16 @@ async function renewPairingInvite() {
     show(elements.pairingQrPanel, false);
     show(elements.pairingUrlPanel, false);
     revealPairingMaterial();
-    show(elements.newPairingLink, remoteAuthenticated);
     renderPairedPhones(pairedPhones);
   } catch (error) {
     if (generation !== remoteGeneration) return;
     setText(elements.newPairingLink, pairingInviteExpired ? 'New pairing link' : 'Renew pairing link');
-    show(elements.newPairingLink, true);
     setPairingStatus(`Could not create a new pairing link. ${error.message}`);
+  } finally {
+    if (generation === remoteGeneration) {
+      pairingInviteRenewing = false;
+      show(elements.newPairingLink, remoteAuthenticated && !presenterConnectionRejected);
+    }
   }
 }
 

@@ -818,6 +818,45 @@ test('hosted invite renewal returns during reconnect and appears after reauthent
   }
 });
 
+test('hosted reauthentication keeps invite renewal unavailable until its request completes', async () => {
+  let finishRenewal;
+  const cloudRenewResponse = new Promise((resolve) => { finishRenewal = resolve; });
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: true, ready: true },
+    cloudRenewResponse,
+  });
+  const { elements, calls, RemoteSocket } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    const firstSocket = RemoteSocket.instance;
+    firstSocket.open();
+    firstSocket.message({ type: 'presenterReady' });
+    const renewal = elements.get('new-pairing-link').dispatch('click');
+    firstSocket.close();
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const secondSocket = RemoteSocket.instance;
+    secondSocket.open();
+    secondSocket.message({ type: 'presenterReady' });
+    assert.equal(elements.get('new-pairing-link').hidden, true);
+    await elements.get('new-pairing-link').dispatch('click');
+    assert.equal(calls.filter(({ url }) => url === '/api/cloud-remote/renew-invite').length, 1);
+
+    finishRenewal({ ok: true, json: async () => ({
+      qrDataUrl: 'data:image/png;base64,cloud-current',
+      fallbackUrl: 'https://gesturedeck-two.vercel.app/r/abcdefghijklmnop#current-invite',
+    }) });
+    await renewal;
+    assert.equal(elements.get('pairing-url').value, 'https://gesturedeck-two.vercel.app/r/abcdefghijklmnop#current-invite');
+    assert.equal(elements.get('pairing-qr').src, 'data:image/png;base64,cloud-current');
+    assert.equal(elements.get('new-pairing-link').hidden, false);
+    await elements.get('disconnect-phone').dispatch('click');
+  } finally {
+    harness.restore();
+  }
+});
+
 test('hosted expired invite stays expired after presenter reconnects', async () => {
   const harness = await createPairingHarness({
     pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
