@@ -137,6 +137,7 @@ test('callback failure acknowledges false and host events use the connection cal
   socket.message({ type: 'phonePaired' });
   socket.message({ type: 'inviteExpired' });
   socket.message({ type: 'sessionEnded' });
+  socket.close();
   assert.deepEqual(events, [
     { type: 'authenticated' }, { type: 'phonePaired' },
     { type: 'inviteExpired' }, { type: 'sessionEnded' },
@@ -151,7 +152,7 @@ test('rejection and close are reported; closed clients send nothing and never re
   socket.message({ type: 'presenterReady' });
   assert.deepEqual(events, [{ type: 'rejected', reason: 'invalid-credential' }]);
   socket.close();
-  assert.deepEqual(events.at(-1), { type: 'closed' });
+  assert.deepEqual(events, [{ type: 'rejected', reason: 'invalid-credential' }]);
   client.publishState({ index: 0, total: 4, busy: false });
   client.connect();
   assert.equal(FakeWebSocket.instances.length, 1);
@@ -165,8 +166,16 @@ test('reasonless presenter rejection is forwarded for the UI fallback', () => {
   assert.deepEqual(events, [{ type: 'rejected' }]);
 });
 
+test('ordinary socket close is terminal when reconnect is disabled', () => {
+  const { client, socket, events } = setup();
+  socket.open(); socket.message({ type: 'presenterReady' }); socket.close();
+  assert.deepEqual(events, [{ type: 'authenticated' }, { type: 'closed' }]);
+  client.connect();
+  assert.equal(FakeWebSocket.instances.length, 1);
+});
+
 test('explicit close prevents late open, ready, command and state sends', () => {
-  const { client, socket, commands } = setup();
+  const { client, socket, commands, events } = setup();
   client.publishState({ index: 0, total: 4, busy: false });
   client.close();
   socket.open();
@@ -175,6 +184,7 @@ test('explicit close prevents late open, ready, command and state sends', () => 
   client.publishState({ index: 1, total: 4, busy: false });
   assert.deepEqual(socket.sent, []);
   assert.deepEqual(commands, []);
+  assert.deepEqual(events, [{ type: 'closed' }]);
 });
 
 test('reconnects after authentication and replays the latest state', () => {
@@ -183,7 +193,8 @@ test('reconnects after authentication and replays the latest state', () => {
   socket.open();
   socket.message({ type: 'presenterReady' });
   socket.close();
-  assert.deepEqual(events.slice(-2), [{ type: 'reconnecting' }, { type: 'closed' }]);
+  assert.deepEqual(events.at(-1), { type: 'reconnecting' });
+  assert.equal(events.some(({ type }) => type === 'closed'), false);
   assert.equal(timers.runNext(), 250);
   const retry = FakeWebSocket.instances[1];
   client.publishState({ index: 2, total: 5, busy: true, secret: 'drop' });
@@ -195,6 +206,7 @@ test('reconnects after authentication and replays the latest state', () => {
   retry.close();
   client.close();
   assert.equal(timers.timers.size, 0);
+  assert.deepEqual(events.at(-1), { type: 'closed' });
 });
 
 test('already-connected on a retry waits for lease expiry, but is terminal initially', () => {
@@ -217,6 +229,14 @@ test('already-connected on a retry waits for lease expiry, but is terminal initi
   fresh.socket.open(); fresh.socket.message({ type: 'presenterRejected', reason: 'already-connected' });
   fresh.socket.close();
   assert.equal(freshTimers.timers.size, 0);
+
+  const disabledTimers = fakeTimers();
+  const disabled = setup({ ...disabledTimers });
+  disabled.socket.open(); disabled.socket.message({ type: 'presenterReady' });
+  disabled.socket.message({ type: 'presenterRejected', reason: 'already-connected' });
+  disabled.socket.close();
+  assert.equal(disabledTimers.timers.size, 0);
+  assert.deepEqual(disabled.events.at(-1), { type: 'rejected', reason: 'already-connected' });
 });
 
 test('terminal hosted errors stop retries after prior authentication', () => {
@@ -228,6 +248,7 @@ test('terminal hosted errors stop retries after prior authentication', () => {
     retry.open(); retry.message({ type: 'presenterRejected', reason }); retry.close();
     assert.equal(timers.timers.size, 0, reason);
     assert.equal(events.some(({ type }) => type === 'reconnecting'), true, reason);
+    assert.deepEqual(events.at(-1), { type: 'rejected', reason }, reason);
     client.close();
   }
 });

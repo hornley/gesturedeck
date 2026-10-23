@@ -142,7 +142,7 @@ export function createMobileRemoteClient({
       rejected = true;
       const rejection = { type: 'rejected' };
       if (typeof message.reason === 'string') rejection.reason = message.reason;
-      if (everAuthenticated && rejection.reason === 'already-connected') retryAlreadyConnected = true;
+      if (reconnectOnClose && everAuthenticated && rejection.reason === 'already-connected') retryAlreadyConnected = true;
       else {
         closed = true;
         if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
@@ -150,6 +150,13 @@ export function createMobileRemoteClient({
         onConnection(rejection);
         return;
       }
+      return;
+    }
+    if (message.type === 'sessionEnded' && Object.keys(message).length === 1) {
+      closed = true;
+      if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
+      retryTimer = undefined;
+      onConnection({ type: 'sessionEnded' });
       return;
     }
     if (!authenticated) return;
@@ -176,13 +183,8 @@ export function createMobileRemoteClient({
       } else send({ type: 'commandAck', id: message.id, accepted: Boolean(result) });
       return;
     }
-    if (['phonePaired', 'inviteExpired', 'sessionEnded'].includes(message.type)
+    if (['phonePaired', 'inviteExpired'].includes(message.type)
       && Object.keys(message).length === 1) {
-      if (message.type === 'sessionEnded') {
-        closed = true;
-        if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
-        retryTimer = undefined;
-      }
       onConnection({ type: message.type });
     }
   }
@@ -208,13 +210,15 @@ export function createMobileRemoteClient({
     socket.onclose = () => {
       if (socket === currentSocket) socket = undefined;
       authenticated = false;
-      if (closed) { onConnection({ type: 'closed' }); return; }
+      if (closed) return;
       const retryRejected = retryAlreadyConnected;
       retryAlreadyConnected = false;
       if (retryRejected || everAuthenticated && reconnectOnClose) onConnection({ type: 'reconnecting' });
       if (retryRejected || everAuthenticated && reconnectOnClose) scheduleRetry();
-      else closed = true;
-      onConnection({ type: 'closed' });
+      else {
+        closed = true;
+        onConnection({ type: 'closed' });
+      }
     };
   }
 
