@@ -788,6 +788,55 @@ test('hosted Redis relay ignores a stale phone poll after presenter disconnect',
     /Timed out waiting for presenterStatus/);
 });
 
+test('hosted Redis relay ignores a stale initial availability read after presenter disconnect', async () => {
+  for (const mode of ['pair', 'resume']) {
+    const fixture = await createFixture();
+    let releaseRead = () => {};
+    try {
+      const presenter = await fixture.presenter();
+      let credential;
+      if (mode === 'resume') {
+        const previous = await fixture.pairPhone(presenter);
+        await previous.peer.waitFor('presenterStatus', (message) => message.available);
+        credential = previous.paired.credential;
+        await previous.peer.close();
+      }
+      const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+      const redisGet = fixture.redis.get.bind(fixture.redis);
+      let captureRead;
+      const readCaptured = new Promise((resolve) => { captureRead = resolve; });
+      const readGate = new Promise((resolve) => { releaseRead = resolve; });
+      fixture.redis.get = async (key) => {
+        const value = await redisGet(key);
+        if (captureRead && key === `${sessionKey}:presenter-ready`) {
+          const captured = captureRead;
+          captureRead = null;
+          captured();
+          await readGate;
+        }
+        return value;
+      };
+
+      const phone = await fixture.connect('phone');
+      phone.send(mode === 'pair'
+        ? { type: 'pair', invite: fixture.pairing.fallbackUrl.split('#')[1], deviceType: 'phone' }
+        : { type: 'resume', credential });
+      await phone.waitFor(mode === 'pair' ? 'paired' : 'resumed');
+      await readCaptured;
+      await presenter.close();
+      assert.deepEqual(await phone.waitFor('presenterStatus', (message) => !message.available), {
+        type: 'presenterStatus', available: false,
+      }, mode);
+      releaseRead();
+      await assert.rejects(phone.waitFor('presenterStatus', (message) => message.available, 100),
+        /Timed out waiting for presenterStatus/, mode);
+    } finally {
+      releaseRead();
+      await fixture.close();
+    }
+  }
+});
+
 test('hosted Redis relay rejects Canva commands until the target is ready', async (t) => {
   const fixture = await createFixture();
   t.after(() => fixture.close());
