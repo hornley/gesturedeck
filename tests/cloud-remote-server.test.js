@@ -135,5 +135,9 @@ test('in-memory cloud relay reports availability after phone resume', async (t) 
   resumed.send({ type: 'resume', credential: paired.credential });
   assert.equal((await resumed.waitFor('resumed')).type, 'resumed');
   assert.deepEqual(await resumed.waitFor('presenterStatus'), { type: 'presenterStatus', available: true });
+
+  resumed.send({ type: 'resume', credential: paired.credential });
+  assert.equal((await resumed.waitFor('resumed')).type, 'resumed');
+  assert.deepEqual(await resumed.waitFor('presenterStatus'), { type: 'presenterStatus', available: true });
   await presenter.close();
 });
