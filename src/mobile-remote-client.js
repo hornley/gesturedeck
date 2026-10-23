@@ -1,4 +1,5 @@
 const PRESENTER_PATH = '/ws/mobile-remote/presenter';
+const RETRY_DELAYS = [250, 500, 1_000, 2_000, 4_000, 5_000];
 const PHONE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const DEVICE_TYPES = new Set(['iphone', 'android-phone', 'phone']);
 
@@ -64,20 +65,26 @@ function validPhoneList(message) {
 /**
  * Connect a presenter to its local or cloud server. onConnection receives
  * { type: 'authenticated' | 'rejected' | 'closed' | 'phonePaired' |
- *   'phones' | 'inviteExpired' | 'sessionEnded', reason?: string }.
- * A rejection may omit its reason. No reconnect is attempted.
+ *   'phones' | 'inviteExpired' | 'sessionEnded' | 'reconnecting', reason?: string }.
+ * A rejection may omit its reason.
  */
 export function createMobileRemoteClient({
   WebSocketImpl = globalThis.WebSocket,
   onCommand = () => false,
   onConnection = () => {},
   hostCredential,
+  reconnectOnClose = false,
+  setTimeoutImpl = globalThis.setTimeout,
+  clearTimeoutImpl = globalThis.clearTimeout,
   path = PRESENTER_PATH,
   location = globalThis.location,
 }) {
   if (typeof WebSocketImpl !== 'function') throw new TypeError('WebSocket is unavailable');
   if (typeof onCommand !== 'function' || typeof onConnection !== 'function') {
     throw new TypeError('Callbacks must be functions');
+  }
+  if (typeof setTimeoutImpl !== 'function' || typeof clearTimeoutImpl !== 'function') {
+    throw new TypeError('Timer hooks must be functions');
   }
   if (typeof hostCredential !== 'string' || hostCredential.length === 0) {
     throw new TypeError('hostCredential must be a non-empty string');
@@ -88,8 +95,12 @@ export function createMobileRemoteClient({
 
   let socket;
   let authenticated = false;
+  let everAuthenticated = false;
   let rejected = false;
   let closed = false;
+  let retryTimer;
+  let retryAttempt = 0;
+  let retryAlreadyConnected = false;
   let latestState;
 
   function isOpen() { return socket?.readyState === (WebSocketImpl.OPEN ?? 1); }
@@ -120,8 +131,10 @@ export function createMobileRemoteClient({
     if (!isRecord(message)) return;
     if (message.type === 'presenterReady' && Object.keys(message).length === 1 && !authenticated) {
       authenticated = true;
-      onConnection({ type: 'authenticated' });
+      everAuthenticated = true;
+      retryAttempt = 0;
       if (latestState) send({ type: 'state', ...latestState });
+      onConnection({ type: 'authenticated' });
       return;
     }
     if (message.type === 'presenterRejected'
@@ -129,7 +142,14 @@ export function createMobileRemoteClient({
       rejected = true;
       const rejection = { type: 'rejected' };
       if (typeof message.reason === 'string') rejection.reason = message.reason;
-      onConnection(rejection);
+      if (everAuthenticated && rejection.reason === 'already-connected') retryAlreadyConnected = true;
+      else {
+        closed = true;
+        if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
+        retryTimer = undefined;
+        onConnection(rejection);
+        return;
+      }
       return;
     }
     if (!authenticated) return;
@@ -157,19 +177,43 @@ export function createMobileRemoteClient({
       return;
     }
     if (['phonePaired', 'inviteExpired', 'sessionEnded'].includes(message.type)
-      && Object.keys(message).length === 1) onConnection({ type: message.type });
+      && Object.keys(message).length === 1) {
+      if (message.type === 'sessionEnded') {
+        closed = true;
+        if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
+        retryTimer = undefined;
+      }
+      onConnection({ type: message.type });
+    }
+  }
+
+  function scheduleRetry() {
+    if (closed || retryTimer !== undefined || !reconnectOnClose || !everAuthenticated) return;
+    const delay = RETRY_DELAYS[Math.min(retryAttempt, RETRY_DELAYS.length - 1)];
+    retryAttempt += 1;
+    retryTimer = setTimeoutImpl(() => {
+      retryTimer = undefined;
+      connect();
+    }, delay);
   }
 
   function connect() {
     if (socket || closed) return;
+    rejected = false;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocketImpl(`${protocol}//${location.host}${path}`);
     socket.onopen = () => send({ type: 'presenter', credential: hostCredential });
     socket.onmessage = handleMessage;
+    const currentSocket = socket;
     socket.onclose = () => {
-      if (closed) return;
-      closed = true;
+      if (socket === currentSocket) socket = undefined;
       authenticated = false;
+      if (closed) { onConnection({ type: 'closed' }); return; }
+      const retryRejected = retryAlreadyConnected;
+      retryAlreadyConnected = false;
+      if (retryRejected || everAuthenticated && reconnectOnClose) onConnection({ type: 'reconnecting' });
+      if (retryRejected || everAuthenticated && reconnectOnClose) scheduleRetry();
+      else closed = true;
       onConnection({ type: 'closed' });
     };
   }
@@ -177,9 +221,13 @@ export function createMobileRemoteClient({
   function close() {
     if (closed) return;
     closed = true;
+    if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
+    retryTimer = undefined;
     authenticated = false;
     latestState = undefined;
-    socket?.close();
+    const currentSocket = socket;
+    socket = undefined;
+    currentSocket?.close();
     onConnection({ type: 'closed' });
   }
 

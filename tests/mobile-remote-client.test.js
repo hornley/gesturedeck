@@ -36,6 +36,23 @@ function setup(options = {}) {
   return { client, socket: FakeWebSocket.instances[0], events, commands };
 }
 
+function fakeTimers() {
+  let nextId = 0;
+  const timers = new Map();
+  return {
+    timers,
+    setTimeoutImpl(callback, delay) { const id = ++nextId; timers.set(id, { callback, delay }); return id; },
+    clearTimeoutImpl(id) { timers.delete(id); },
+    runNext() {
+      const [id, timer] = timers.entries().next().value ?? [];
+      if (!timer) return;
+      timers.delete(id);
+      timer.callback();
+      return timer.delay;
+    },
+  };
+}
+
 test('authenticates first, then publishes only the latest sanitized state', () => {
   const { client, socket, events } = setup();
   assert.equal(socket.url, 'ws://127.0.0.1:5173/ws/mobile-remote/presenter');
@@ -158,4 +175,59 @@ test('explicit close prevents late open, ready, command and state sends', () => 
   client.publishState({ index: 1, total: 4, busy: false });
   assert.deepEqual(socket.sent, []);
   assert.deepEqual(commands, []);
+});
+
+test('reconnects after authentication and replays the latest state', () => {
+  const timers = fakeTimers();
+  const { client, socket, events } = setup({ reconnectOnClose: true, ...timers });
+  socket.open();
+  socket.message({ type: 'presenterReady' });
+  socket.close();
+  assert.deepEqual(events.slice(-2), [{ type: 'reconnecting' }, { type: 'closed' }]);
+  assert.equal(timers.runNext(), 250);
+  const retry = FakeWebSocket.instances[1];
+  client.publishState({ index: 2, total: 5, busy: true, secret: 'drop' });
+  retry.open();
+  assert.deepEqual(retry.sent, [{ type: 'presenter', credential: 'host-secret' }]);
+  retry.message({ type: 'presenterReady' });
+  assert.deepEqual(retry.sent[1], { type: 'state', index: 2, total: 5, busy: true });
+  assert.deepEqual(events.at(-1), { type: 'authenticated' });
+  retry.close();
+  client.close();
+  assert.equal(timers.timers.size, 0);
+});
+
+test('already-connected on a retry waits for lease expiry, but is terminal initially', () => {
+  const timers = fakeTimers();
+  const { client, socket, events } = setup({ reconnectOnClose: true, ...timers });
+  socket.open(); socket.message({ type: 'presenterReady' }); socket.close();
+  assert.equal(timers.runNext(), 250);
+  const retry = FakeWebSocket.instances[1];
+  retry.open(); retry.message({ type: 'presenterRejected', reason: 'already-connected' }); retry.close();
+  assert.deepEqual(events.filter(({ type }) => type === 'rejected'), []);
+  assert.equal(timers.runNext(), 500);
+  const next = FakeWebSocket.instances[2];
+  client.publishState({ index: 1, total: 3, busy: false });
+  next.open(); next.message({ type: 'presenterReady' });
+  assert.deepEqual(next.sent.at(-1), { type: 'state', index: 1, total: 3, busy: false });
+  client.close();
+
+  const freshTimers = fakeTimers();
+  const fresh = setup({ reconnectOnClose: true, ...freshTimers });
+  fresh.socket.open(); fresh.socket.message({ type: 'presenterRejected', reason: 'already-connected' });
+  fresh.socket.close();
+  assert.equal(freshTimers.timers.size, 0);
+});
+
+test('terminal hosted errors stop retries after prior authentication', () => {
+  for (const reason of ['invalid-credential', 'session-missing', 'session-ended', 'invalid-session-state']) {
+    const timers = fakeTimers();
+    const { client, socket, events } = setup({ reconnectOnClose: true, ...timers });
+    socket.open(); socket.message({ type: 'presenterReady' }); socket.close(); timers.runNext();
+    const retry = FakeWebSocket.instances[1];
+    retry.open(); retry.message({ type: 'presenterRejected', reason }); retry.close();
+    assert.equal(timers.timers.size, 0, reason);
+    assert.equal(events.some(({ type }) => type === 'reconnecting'), true, reason);
+    client.close();
+  }
 });
