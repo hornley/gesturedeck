@@ -137,6 +137,7 @@ export function mountMobileRemotePhone({
   let retryAttempt = 0;
   let currentState;
   let ready = false;
+  let presenterAvailable = !cloudSessionId;
   let terminal = false;
   let explicitlyDisconnected = false;
   let pairingInProgress = false;
@@ -186,7 +187,8 @@ export function mountMobileRemotePhone({
 
   function renderControls() {
     const canvaTarget = currentState?.target === 'canva';
-    const canNavigate = ready && Boolean(currentState) && !currentState.busy && (!canvaTarget || currentState.ready);
+    const canNavigate = ready && presenterAvailable && Boolean(currentState)
+      && !currentState.busy && (!canvaTarget || currentState.ready);
     targetLabel.textContent = canvaTarget
       ? currentState.ready ? 'LIVE CANVA PRESENTATION' : 'CANVA NOT READY'
       : 'CURRENT SLIDE';
@@ -284,7 +286,8 @@ export function mountMobileRemotePhone({
   }
 
   function sendNavigation(action, index) {
-    if (!ready || !currentState || currentState.busy || (currentState.target === 'canva' && !currentState.ready) || !isOpen()) return false;
+    if (!ready || !presenterAvailable || !currentState || currentState.busy
+      || (currentState.target === 'canva' && !currentState.ready) || !isOpen()) return false;
     if (!['previous', 'next', 'goTo'].includes(action)) return false;
     if (currentState.target === 'canva' && action === 'goTo') return false;
     if (currentState.target !== 'canva' && action === 'previous' && currentState.index === 0) return false;
@@ -327,6 +330,16 @@ export function mountMobileRemotePhone({
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
     if (!isRecord(message)) return;
+
+    if (message.type === 'presenterStatus') {
+      if (cloudSessionId
+        && Object.keys(message).sort().join(',') === 'available,type'
+        && typeof message.available === 'boolean') {
+        presenterAvailable = message.available;
+        renderControls();
+      }
+      return;
+    }
 
     const hasPhoneIdentity = validPhoneIdentity(message);
     const legacyCloudPair = cloudSessionId

@@ -396,6 +396,57 @@ test('reload resumes with the stored credential and replaces position from curre
   assert.match(result.document.getElementById('connection-status').textContent, /connected/i);
 });
 
+test('hosted presenter availability gates navigation without clearing phone credentials', () => {
+  const sessionId = 'fedcba9876543210';
+  const credential = 'cloud-phone-secret';
+  const result = setup({
+    hash: '',
+    storageImpl: storage({ [`phoneSessionCredential:${sessionId}`]: credential }),
+    locationExtras: {
+      protocol: 'https:', host: 'gesturedeck.example', pathname: `/r/${sessionId}`,
+      href: `https://gesturedeck.example/r/${sessionId}`,
+    },
+  });
+  const first = result.socket;
+  first.open();
+  assert.deepEqual(first.sent, [{ type: 'resume', credential }]);
+  first.message({
+    type: 'resumed', phoneId: 'cloud-phone-id', label: 'Phone 1', deviceType: 'phone',
+    state: { index: 2, total: 8, busy: false },
+  });
+
+  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, true, id);
+  first.message({ type: 'presenterStatus', available: true, extra: 'invalid' });
+  first.message({ type: 'presenterStatus', available: 'true' });
+  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, true, id);
+
+  first.message({ type: 'presenterStatus', available: true });
+  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, false, id);
+  first.message({ type: 'presenterStatus', available: false });
+  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, true, id);
+  assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
+  assert.equal(first.readyState, FakeWebSocket.OPEN);
+  const sentWhileUnavailable = first.sent.length;
+  result.document.getElementById('next-button').dispatch('click');
+  assert.equal(first.sent.length, sentWhileUnavailable);
+
+  first.close();
+  assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
+  assert.match(result.document.getElementById('connection-status').textContent, /disconnected|reconnect/i);
+  assert.equal(result.document.flushTimer(), 250);
+  const reconnect = FakeWebSocket.instances[1];
+  reconnect.open();
+  assert.deepEqual(reconnect.sent, [{ type: 'resume', credential }]);
+  reconnect.message({
+    type: 'resumed', phoneId: 'cloud-phone-id', label: 'Phone 1', deviceType: 'phone',
+    state: { index: 3, total: 8, busy: false },
+  });
+  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, true, id);
+  reconnect.message({ type: 'presenterStatus', available: true });
+  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, false, id);
+  assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
+});
+
 test('resume rejection and session end clear the stored credential', () => {
   for (const message of [
     { type: 'resumeRejected', reason: 'invalid' },
