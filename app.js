@@ -158,6 +158,7 @@ let pendingPairingInvite = null;
 let remoteActive = false;
 let remoteStarting = false;
 let remoteAuthenticated = false;
+let remoteReconnecting = false;
 let presenterConnectionRejected = false;
 let remoteGeneration = 0;
 // Keep stop requests distinct across replacements and coalesce duplicates for one session.
@@ -680,6 +681,7 @@ export function connectMobileRemote({ hostCredential, WebSocketImpl, onConnectio
   mobileRemoteClient?.close();
   mobileRemoteClient = createMobileRemoteClient({
     hostCredential, WebSocketImpl, onConnection, path,
+    reconnectOnClose: cloudExperience,
     onCommand: handleRemoteCommand,
     location: window.location,
   });
@@ -764,7 +766,7 @@ function renderPairedPhones(phones) {
   elements.pairedPhones.replaceChildren(...rows);
   setText(elements.pairedPhoneCount, `${pairedPhones.length} / 8`);
   show(elements.pairedPhonesEmpty, pairedPhones.length === 0);
-  show(elements.pairedPhonesPanel, remoteActive && remoteAuthenticated);
+  show(elements.pairedPhonesPanel, remoteActive && (remoteAuthenticated || remoteReconnecting));
 
   if (pairingInviteExpired || !remoteAuthenticated) return;
   if (pairedPhones.length === 0) {
@@ -808,6 +810,7 @@ function resetPairingUi() {
   remoteActive = false;
   remoteStarting = false;
   remoteAuthenticated = false;
+  remoteReconnecting = false;
   presenterConnectionRejected = false;
   phoneRemoteTarget = null;
   pairingInviteExpired = false;
@@ -888,11 +891,19 @@ function handleMobileRemoteConnection(event, generation) {
   if (generation !== remoteGeneration || closingMobileRemote) return;
   if (event.type === 'authenticated') {
     remoteAuthenticated = true;
+    remoteReconnecting = false;
     revealPairingMaterial();
     setText(elements.newPairingLink, 'Renew pairing link');
     show(elements.newPairingLink, true);
     setPairingStatus('Waiting for your phone to connect');
     renderPairedPhones(pairedPhones);
+    return;
+  }
+  if (event.type === 'reconnecting') {
+    remoteAuthenticated = false;
+    remoteReconnecting = true;
+    renderPairedPhones(pairedPhones);
+    setPairingStatus('Presenter connection interrupted. Reconnecting…');
     return;
   }
   if (event.type === 'phonePaired') {
@@ -912,6 +923,8 @@ function handleMobileRemoteConnection(event, generation) {
     return;
   }
   if (event.type === 'rejected') {
+    remoteReconnecting = false;
+    renderPairedPhones(pairedPhones);
     clearPairingMaterial();
     presenterConnectionRejected = true;
     const rejectionMessages = {
@@ -943,6 +956,7 @@ async function startMobileRemote() {
   const generation = ++remoteGeneration;
   activeRemoteSessionKey += 1;
   remoteStarting = true;
+  remoteReconnecting = false;
   pairedPhones = [];
   pairingInviteExpired = false;
   updatePairingStartButton();
@@ -992,6 +1006,7 @@ async function startMobileRemote() {
     remoteStarting = false;
     remoteActive = false;
     remoteAuthenticated = false;
+    remoteReconnecting = false;
     phoneRemoteTarget = null;
     renderTargetStatus();
     clearPairingMaterial();
@@ -1008,6 +1023,7 @@ async function startCloudMobileRemote() {
   const generation = ++remoteGeneration;
   activeRemoteSessionKey += 1;
   remoteStarting = true;
+  remoteReconnecting = false;
   updatePairingStartButton();
   show(elements.newPairingLink, false);
   clearPairingMaterial();
@@ -1062,6 +1078,7 @@ async function startCloudMobileRemote() {
     remoteStarting = false;
     remoteActive = false;
     remoteAuthenticated = false;
+    remoteReconnecting = false;
     cloudRemoteSession = null;
     phoneRemoteTarget = null;
     renderTargetStatus();

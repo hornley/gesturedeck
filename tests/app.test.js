@@ -725,6 +725,53 @@ test('hosted Canva pairing starts before controls are ready and publishes readin
   }
 });
 
+test('hosted presenter reconnects without stopping the cloud session', async () => {
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: true, ready: true },
+  });
+  const { elements, calls, RemoteSocket } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    const firstSocket = RemoteSocket.instance;
+    firstSocket.open();
+    firstSocket.message({ type: 'presenterReady' });
+    firstSocket.message({ type: 'phones', phones: [
+      { phoneId: 'phone-1', label: 'Alex iPhone', deviceType: 'iphone', status: 'connected' },
+    ] });
+    const pairingUrl = elements.get('pairing-url').value;
+    assert.ok(pairingUrl);
+
+    firstSocket.close();
+    assert.match(elements.get('pairing-status').textContent, /Reconnecting/);
+    assert.equal(elements.get('paired-phones-panel').hidden, false);
+    assert.equal(elements.get('paired-phones').children[0].children[0].children[0].textContent, 'Alex iPhone');
+    assert.equal(elements.get('pairing-qr-panel').hidden, false);
+    assert.equal(elements.get('pairing-url-panel').hidden, false);
+    assert.equal(elements.get('pairing-url').value, pairingUrl);
+    assert.equal(calls.some(({ url }) => url === '/api/cloud-remote/stop'), false);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const secondSocket = RemoteSocket.instance;
+    assert.notEqual(secondSocket, firstSocket);
+    assert.equal(secondSocket.url, firstSocket.url);
+    secondSocket.open();
+    assert.deepEqual(secondSocket.sent[0], { type: 'presenter', credential: 'host-secret' });
+    secondSocket.message({ type: 'presenterReady' });
+    assert.equal(elements.get('paired-phones-panel').hidden, false);
+    assert.equal(elements.get('paired-phones').children[0].children[0].children[0].textContent, 'Alex iPhone');
+    assert.equal(elements.get('pairing-qr-panel').hidden, false);
+    assert.equal(elements.get('pairing-url-panel').hidden, false);
+    assert.equal(elements.get('pairing-url').value, pairingUrl);
+    assert.match(elements.get('pairing-status').textContent, /connected/i);
+
+    await elements.get('disconnect-phone').dispatch('click');
+    assert.ok(calls.some(({ url }) => url === '/api/cloud-remote/stop'));
+  } finally {
+    harness.restore();
+  }
+});
+
 test('hosted startup with Canva disconnected opens pairing without starting a session', async () => {
   const harness = await createPairingHarness({
     pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
