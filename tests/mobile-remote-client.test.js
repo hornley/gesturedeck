@@ -128,6 +128,37 @@ test('waits for an asynchronous target result before acknowledging a phone comma
   });
 });
 
+test('async command acknowledgements stay on their originating authenticated socket', async () => {
+  const timers = fakeTimers();
+  const settlements = [];
+  const { client, socket } = setup({
+    reconnectOnClose: true,
+    ...timers,
+    onCommand: () => new Promise((resolve) => settlements.push(resolve)),
+  });
+  socket.open(); socket.message({ type: 'presenterReady' });
+  socket.message({ type: 'command', id: 'old-before-auth', action: 'next' });
+  socket.message({ type: 'command', id: 'old-after-auth', action: 'next' });
+  socket.close();
+  timers.runNext();
+  const replacement = FakeWebSocket.instances[1];
+  replacement.open();
+  settlements[0](true);
+  await Promise.resolve();
+  assert.deepEqual(replacement.sent, [{ type: 'presenter', credential: 'host-secret' }]);
+
+  replacement.message({ type: 'presenterReady' });
+  settlements[1](true);
+  await Promise.resolve();
+  assert.equal(replacement.sent.some(({ type }) => type === 'commandAck'), false);
+
+  replacement.message({ type: 'command', id: 'current', action: 'next' });
+  settlements[2](true);
+  await Promise.resolve();
+  assert.deepEqual(replacement.sent.at(-1), { type: 'commandAck', id: 'current', accepted: true });
+  client.close();
+});
+
 test('callback failure acknowledges false and host events use the connection callback', () => {
   const { socket, events } = setup({ onCommand: () => { throw new Error('bridge failed'); } });
   socket.open();
@@ -189,7 +220,17 @@ test('explicit close prevents late open, ready, command and state sends', () => 
 
 test('reconnects after authentication and replays the latest state', () => {
   const timers = fakeTimers();
-  const { client, socket, events } = setup({ reconnectOnClose: true, ...timers });
+  let stateSentAtAuth = false;
+  const { client, socket, events } = setup({
+    reconnectOnClose: true,
+    ...timers,
+    onConnection: (event) => {
+      events.push(event);
+      if (event.type === 'authenticated') {
+        stateSentAtAuth = FakeWebSocket.instances.at(-1).sent.some(({ type }) => type === 'state');
+      }
+    },
+  });
   socket.open();
   socket.message({ type: 'presenterReady' });
   socket.close();
@@ -201,12 +242,41 @@ test('reconnects after authentication and replays the latest state', () => {
   retry.open();
   assert.deepEqual(retry.sent, [{ type: 'presenter', credential: 'host-secret' }]);
   retry.message({ type: 'presenterReady' });
+  assert.equal(stateSentAtAuth, true);
   assert.deepEqual(retry.sent[1], { type: 'state', index: 2, total: 5, busy: true });
   assert.deepEqual(events.at(-1), { type: 'authenticated' });
   retry.close();
   client.close();
   assert.equal(timers.timers.size, 0);
   assert.deepEqual(events.at(-1), { type: 'closed' });
+});
+
+test('retry delays cap and reset after successful authentication', () => {
+  const timers = fakeTimers();
+  const { client, socket } = setup({ reconnectOnClose: true, ...timers });
+  socket.open(); socket.message({ type: 'presenterReady' });
+  socket.close();
+  const delays = [250, 500, 1_000, 2_000, 4_000, 5_000, 5_000];
+  for (const [index, delay] of delays.entries()) {
+    assert.equal(timers.runNext(), delay);
+    const retry = FakeWebSocket.instances.at(-1);
+    if (index === delays.length - 1) {
+      retry.open(); retry.message({ type: 'presenterReady' }); retry.close();
+    } else retry.close();
+  }
+  assert.equal(timers.runNext(), 250);
+  client.close();
+});
+
+test('sessionEnded cancels hosted reconnects', () => {
+  const timers = fakeTimers();
+  const { client, socket, events } = setup({ reconnectOnClose: true, ...timers });
+  socket.open(); socket.message({ type: 'presenterReady' });
+  socket.message({ type: 'sessionEnded' });
+  socket.close();
+  assert.deepEqual(events.at(-1), { type: 'sessionEnded' });
+  assert.equal(timers.timers.size, 0);
+  client.close();
 });
 
 test('already-connected on a retry waits for lease expiry, but is terminal initially', () => {

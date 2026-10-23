@@ -124,8 +124,8 @@ export function createMobileRemoteClient({
     return true;
   }
 
-  function handleMessage(event) {
-    if (closed || rejected || !isOpen() || typeof event?.data !== 'string') return;
+  function handleMessage(event, sourceSocket) {
+    if (closed || rejected || socket !== sourceSocket || !isOpen() || typeof event?.data !== 'string') return;
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
     if (!isRecord(message)) return;
@@ -176,9 +176,14 @@ export function createMobileRemoteClient({
       let result = false;
       try { result = onCommand(command); } catch { /* Reject failed commands. */ }
       if (result && typeof result.then === 'function') {
+        const acknowledge = (accepted) => {
+          if (socket === sourceSocket && authenticated && isOpen()) {
+            send({ type: 'commandAck', id: message.id, accepted: Boolean(accepted) });
+          }
+        };
         Promise.resolve(result).then(
-          (accepted) => send({ type: 'commandAck', id: message.id, accepted: Boolean(accepted) }),
-          () => send({ type: 'commandAck', id: message.id, accepted: false }),
+          acknowledge,
+          () => acknowledge(false),
         );
       } else send({ type: 'commandAck', id: message.id, accepted: Boolean(result) });
       return;
@@ -204,10 +209,10 @@ export function createMobileRemoteClient({
     rejected = false;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocketImpl(`${protocol}//${location.host}${path}`);
-    socket.onopen = () => send({ type: 'presenter', credential: hostCredential });
-    socket.onmessage = handleMessage;
     const currentSocket = socket;
-    socket.onclose = () => {
+    currentSocket.onopen = () => send({ type: 'presenter', credential: hostCredential });
+    currentSocket.onmessage = (event) => handleMessage(event, currentSocket);
+    currentSocket.onclose = () => {
       if (socket === currentSocket) socket = undefined;
       authenticated = false;
       if (closed) return;
