@@ -273,10 +273,12 @@ export function attachCloudRemote(server, {
           socket.close(1008, 'Pairing required');
           return;
         }
+        const wasAdmitted = admitted;
         admitted = Boolean(entry.remote.handlePhoneMessage(socket, message));
         if (admitted) {
           entry.pendingPhoneSockets.delete(socket);
           clearTimeoutImpl(timer);
+          if (!wasAdmitted) socket.send({ type: 'presenterStatus', available: true });
         }
       });
     },
