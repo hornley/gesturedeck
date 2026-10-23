@@ -47,7 +47,12 @@ class Peer {
     if (this.socket.readyState === WebSocket.CLOSED) return;
     const closed = once(this.socket, 'close');
     this.socket.close();
-    await Promise.race([closed, new Promise((resolve) => setTimeout(resolve, 500))]);
+    let timeout;
+    try {
+      await Promise.race([closed, new Promise((resolve) => { timeout = setTimeout(resolve, 500); })]);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
