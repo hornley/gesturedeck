@@ -62,6 +62,7 @@ class FakeElement {
 async function createPairingHarness({
   pageUrl = 'http://127.0.0.1:5173/workspace.html',
   initialExtensionState = { connected: false, ready: false },
+  cloudRenewResponse,
 } = {}) {
   const ids = [
     'connect-phone', 'pairing-dialog', 'pairing-interface', 'start-phone-remote',
@@ -168,6 +169,7 @@ async function createPairingHarness({
         fallbackUrl: 'http://192.168.1.20:43123/remote#renewed',
       }) };
     }
+    if (url === '/api/cloud-remote/renew-invite') return cloudRenewResponse;
     if (url === '/api/mobile-remote/stop' || url === '/api/cloud-remote/stop') {
       return { ok: true, json: async () => ({ stopped: true }) };
     }
@@ -767,6 +769,79 @@ test('hosted presenter reconnects without stopping the cloud session', async () 
 
     await elements.get('disconnect-phone').dispatch('click');
     assert.ok(calls.some(({ url }) => url === '/api/cloud-remote/stop'));
+  } finally {
+    harness.restore();
+  }
+});
+
+test('hosted invite renewal returns during reconnect and appears after reauthentication', async () => {
+  let finishRenewal;
+  const cloudRenewResponse = new Promise((resolve) => { finishRenewal = resolve; });
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: true, ready: true },
+    cloudRenewResponse,
+  });
+  const { elements, calls, RemoteSocket } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    const firstSocket = RemoteSocket.instance;
+    firstSocket.open();
+    firstSocket.message({ type: 'presenterReady' });
+    const oldUrl = elements.get('pairing-url').value;
+
+    const renewal = elements.get('new-pairing-link').dispatch('click');
+    assert.ok(calls.some(({ url }) => url === '/api/cloud-remote/renew-invite'));
+    firstSocket.close();
+    finishRenewal({ ok: true, json: async () => ({
+      qrDataUrl: 'data:image/png;base64,cloud-renewed',
+      fallbackUrl: 'https://gesturedeck-two.vercel.app/r/abcdefghijklmnop#new-invite',
+    }) });
+    await renewal;
+    assert.equal(elements.get('pairing-qr-panel').hidden, true);
+    assert.equal(elements.get('pairing-url-panel').hidden, true);
+    assert.equal(elements.get('new-pairing-link').hidden, true);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const secondSocket = RemoteSocket.instance;
+    secondSocket.open();
+    secondSocket.message({ type: 'presenterReady' });
+    assert.notEqual(elements.get('pairing-url').value, oldUrl);
+    assert.equal(elements.get('pairing-url').value, 'https://gesturedeck-two.vercel.app/r/abcdefghijklmnop#new-invite');
+    assert.equal(elements.get('pairing-qr').src, 'data:image/png;base64,cloud-renewed');
+    assert.equal(elements.get('pairing-qr-panel').hidden, false);
+    assert.equal(elements.get('pairing-url-panel').hidden, false);
+    assert.equal(elements.get('new-pairing-link').hidden, false);
+    await elements.get('disconnect-phone').dispatch('click');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('hosted expired invite stays expired after presenter reconnects', async () => {
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: true, ready: true },
+  });
+  const { elements, RemoteSocket } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    const firstSocket = RemoteSocket.instance;
+    firstSocket.open();
+    firstSocket.message({ type: 'presenterReady' });
+    firstSocket.message({ type: 'inviteExpired' });
+    firstSocket.close();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const secondSocket = RemoteSocket.instance;
+    secondSocket.open();
+    secondSocket.message({ type: 'presenterReady' });
+
+    assert.equal(elements.get('pairing-status').textContent,
+      'Pairing link expired. Create a new pairing link to continue.');
+    assert.equal(elements.get('new-pairing-link').textContent, 'New pairing link');
+    assert.equal(elements.get('pairing-qr-panel').hidden, true);
+    assert.equal(elements.get('pairing-url-panel').hidden, true);
+    await elements.get('disconnect-phone').dispatch('click');
   } finally {
     harness.restore();
   }

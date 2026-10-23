@@ -893,9 +893,11 @@ function handleMobileRemoteConnection(event, generation) {
     remoteAuthenticated = true;
     remoteReconnecting = false;
     revealPairingMaterial();
-    setText(elements.newPairingLink, 'Renew pairing link');
+    setText(elements.newPairingLink, pairingInviteExpired ? 'New pairing link' : 'Renew pairing link');
     show(elements.newPairingLink, true);
-    setPairingStatus('Waiting for your phone to connect');
+    setPairingStatus(pairingInviteExpired
+      ? 'Pairing link expired. Create a new pairing link to continue.'
+      : 'Waiting for your phone to connect');
     renderPairedPhones(pairedPhones);
     return;
   }
@@ -1106,15 +1108,17 @@ async function renewPairingInvite() {
     const result = cloudExperience
       ? await requestCloudRemote('renew-invite', { body: cloudRemoteSession })
       : await requestMobileRemote('renew-invite', { method: 'POST', body: {} });
-    if (generation !== remoteGeneration || !remoteActive || !remoteAuthenticated) return;
+    if (generation !== remoteGeneration || !remoteActive || (!remoteAuthenticated && !remoteReconnecting)) return;
     if (typeof result.qrDataUrl !== 'string' || typeof result.fallbackUrl !== 'string') {
       throw new Error('The pairing service returned an incomplete pairing link.');
     }
     pendingPairingInvite = { qrDataUrl: result.qrDataUrl, fallbackUrl: result.fallbackUrl };
     pairingInviteExpired = false;
     setText(elements.newPairingLink, 'Renew pairing link');
+    show(elements.pairingQrPanel, false);
+    show(elements.pairingUrlPanel, false);
     revealPairingMaterial();
-    show(elements.newPairingLink, true);
+    show(elements.newPairingLink, remoteAuthenticated);
     renderPairedPhones(pairedPhones);
   } catch (error) {
     if (generation !== remoteGeneration) return;
