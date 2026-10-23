@@ -229,6 +229,7 @@ test('already-connected on a retry waits for lease expiry, but is terminal initi
   fresh.socket.open(); fresh.socket.message({ type: 'presenterRejected', reason: 'already-connected' });
   fresh.socket.close();
   assert.equal(freshTimers.timers.size, 0);
+  assert.deepEqual(fresh.events.at(-1), { type: 'rejected', reason: 'already-connected' });
 
   const disabledTimers = fakeTimers();
   const disabled = setup({ ...disabledTimers });
@@ -237,6 +238,14 @@ test('already-connected on a retry waits for lease expiry, but is terminal initi
   disabled.socket.close();
   assert.equal(disabledTimers.timers.size, 0);
   assert.deepEqual(disabled.events.at(-1), { type: 'rejected', reason: 'already-connected' });
+
+  const authenticatedTimers = fakeTimers();
+  const authenticated = setup({ reconnectOnClose: true, ...authenticatedTimers });
+  authenticated.socket.open(); authenticated.socket.message({ type: 'presenterReady' });
+  authenticated.socket.message({ type: 'presenterRejected', reason: 'already-connected' });
+  authenticated.socket.close();
+  assert.equal(authenticatedTimers.timers.size, 0);
+  assert.deepEqual(authenticated.events.at(-1), { type: 'rejected', reason: 'already-connected' });
 });
 
 test('terminal hosted errors stop retries after prior authentication', () => {

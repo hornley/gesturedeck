@@ -142,7 +142,7 @@ export function createMobileRemoteClient({
       rejected = true;
       const rejection = { type: 'rejected' };
       if (typeof message.reason === 'string') rejection.reason = message.reason;
-      if (reconnectOnClose && everAuthenticated && rejection.reason === 'already-connected') retryAlreadyConnected = true;
+      if (reconnectOnClose && everAuthenticated && !authenticated && rejection.reason === 'already-connected') retryAlreadyConnected = true;
       else {
         closed = true;
         if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
