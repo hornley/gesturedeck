@@ -251,6 +251,8 @@ test('hosted remote sends metadata and shows the assigned phone identity', () =>
     label: 'Alex Phone', deviceType: 'iphone',
     state: { index: 2, total: 18, busy: false },
   });
+  assert.equal(result.document.getElementById('next-button').disabled, true);
+  result.socket.message({ type: 'presenterStatus', available: true });
 
   assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), 'cloud-phone-secret');
   assert.equal(result.sessionStorage.values.get(`phoneSessionLabel:${sessionId}`), 'Alex Phone');
@@ -275,6 +277,8 @@ test('hosted remote resumes legacy sessions with the old cloud response shape', 
   result.socket.open();
   assert.deepEqual(result.socket.sent, [{ type: 'resume', credential: 'cloud-phone-secret' }]);
   result.socket.message({ type: 'resumed', state: { index: 7, total: 18, busy: false } });
+  assert.equal(result.document.getElementById('next-button').disabled, true);
+  result.socket.message({ type: 'presenterStatus', available: true });
 
   assert.equal(result.document.getElementById('slide-position').textContent, '8 / 18');
   assert.match(result.document.getElementById('connection-status').textContent, /connected/i);
@@ -422,14 +426,10 @@ test('hosted presenter availability gates navigation without clearing phone cred
 
   first.message({ type: 'presenterStatus', available: true });
   for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, false, id);
-  first.message({ type: 'presenterStatus', available: false });
-  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, true, id);
-  assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
+  assert.equal(result.document.getElementById('connection-status').textContent, 'Connected to presenter');
   assert.equal(first.readyState, FakeWebSocket.OPEN);
-  const sentWhileUnavailable = first.sent.length;
-  result.document.getElementById('next-button').dispatch('click');
-  assert.equal(first.sent.length, sentWhileUnavailable);
 
+  // The phone disconnects before hearing the presenter's unavailable event.
   first.close();
   assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
   assert.match(result.document.getElementById('connection-status').textContent, /disconnected|reconnect/i);
@@ -442,8 +442,19 @@ test('hosted presenter availability gates navigation without clearing phone cred
     state: { index: 3, total: 8, busy: false },
   });
   for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, true, id);
+  assert.equal(result.document.getElementById('connection-status').textContent, 'Presenter reconnecting…');
+  reconnect.message({ type: 'presenterStatus', available: false });
+  for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, true, id);
+  assert.equal(result.document.getElementById('connection-status').textContent, 'Presenter reconnecting…');
+  assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
+  assert.equal(reconnect.readyState, FakeWebSocket.OPEN);
+  const sentWhileUnavailable = reconnect.sent.length;
+  result.document.getElementById('next-button').dispatch('click');
+  assert.equal(reconnect.sent.length, sentWhileUnavailable);
+
   reconnect.message({ type: 'presenterStatus', available: true });
   for (const id of CONTROL_IDS.slice(0, 4)) assert.equal(result.document.getElementById(id).disabled, false, id);
+  assert.equal(result.document.getElementById('connection-status').textContent, 'Connected to presenter');
   assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
 });
 

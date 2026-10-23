@@ -336,6 +336,8 @@ export function mountMobileRemotePhone({
         && Object.keys(message).sort().join(',') === 'available,type'
         && typeof message.available === 'boolean') {
         presenterAvailable = message.available;
+        setStatus(presenterAvailable ? 'Connected to presenter' : 'Presenter reconnecting…',
+          presenterAvailable ? 'connected' : 'error');
         renderControls();
       }
       return;
@@ -368,7 +370,8 @@ export function mountMobileRemotePhone({
       const inviteRemoved = clearInviteFragment();
       ready = true;
       retryAttempt = 0;
-      setStatus('Connected to presenter', 'connected');
+      setStatus(presenterAvailable ? 'Connected to presenter' : 'Presenter reconnecting…',
+        presenterAvailable ? 'connected' : 'error');
       renderControls();
       if (!inviteRemoved) {
         actionStatus.textContent = 'Connected, but the pairing fragment could not be removed from this address.';
@@ -384,7 +387,8 @@ export function mountMobileRemotePhone({
       if (hasPhoneIdentity) setConnectedAs(message.label);
       ready = true;
       retryAttempt = 0;
-      setStatus('Connected to presenter', 'connected');
+      setStatus(presenterAvailable ? 'Connected to presenter' : 'Presenter reconnecting…',
+        presenterAvailable ? 'connected' : 'error');
       renderControls();
       if (disconnectRequested && !finishDisconnect(target)) {
         setStatus('Connection is unstable. Retrying the phone disconnect…', 'error');
@@ -439,6 +443,10 @@ export function mountMobileRemotePhone({
 
   function connect() {
     if (terminal || explicitlyDisconnected || socket && socket.readyState !== 3) return;
+    if (cloudSessionId) {
+      presenterAvailable = false;
+      renderControls();
+    }
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     let nextSocket;
     try { nextSocket = new WebSocketImpl(`${protocol}//${location.host}${phonePath}`); }
