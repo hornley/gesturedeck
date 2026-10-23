@@ -177,7 +177,8 @@ class MemoryRedis {
       const leaseKey = legacy ? keys[5] : keys[4];
       if (!session?.active || (!paired && !legacy)) return 'invalid';
       if (this.values.get(leaseKey) !== args[6]) return 'invalid';
-      if (!this.values.has(keys[6])) return 'unavailable';
+      const readyOwner = this.values.get(keys[6]);
+      if (!readyOwner || this.values.get(keys[7]) !== readyOwner) return 'unavailable';
       if (session.state.target === 'canva' && session.state.ready !== true) return 'not-ready';
       if (args[1] === 'goTo'
         && (session.state.target === 'canva' || Number(args[2]) >= session.state.total)) return 'out-of-range';
@@ -294,7 +295,7 @@ class MemoryRedis {
         ? [[keys[2], events.map(({ id, message }) => [id, ['data', JSON.stringify(message)]])]]
         : [];
       return ['ok', JSON.stringify(session), JSON.stringify(streams), session.inviteExpiredNotified ? '1' : '0',
-        this.values.has(keys[3]) ? '1' : '0'];
+        this.values.get(keys[3]) && this.values.get(keys[3]) === this.values.get(keys[4]) ? '1' : '0'];
     }
 
     if (operation === 'PUBLISH_EVENT') {
@@ -303,15 +304,19 @@ class MemoryRedis {
     }
 
     if (operation === 'RELEASE_PRESENTER') {
-      if (this.values.get(keys[1]) !== args[0]) return 0;
-      this.values.delete(keys[1]);
+      let released = 0;
+      if (this.values.get(keys[1]) === args[0]) {
+        this.values.delete(keys[1]);
+        released = 1;
+      }
       if (this.values.get(keys[2]) === args[0]) {
         this.values.delete(keys[2]);
+        released = 1;
         if (this.values.get(keys[0])?.active) {
           this.#publish(keys[3], keys[4], { type: 'presenterStatus', available: false });
         }
       }
-      return 1;
+      return released;
     }
 
     if (operation === 'RELEASE_PHONE') {
@@ -712,6 +717,75 @@ test('hosted Redis relay keeps explicit stop terminal', async (t) => {
   const retry = await fixture.connect('phone');
   retry.send({ type: 'resume', credential: paired.credential });
   assert.deepEqual(await retry.waitFor('resumeRejected'), { type: 'resumeRejected', reason: 'invalid' });
+});
+
+test('hosted Redis relay rejects commands when readiness outlives the presenter lease', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const { peer: phone, paired } = await fixture.pairPhone(presenter);
+  await phone.waitFor('presenterStatus', (message) => message.available);
+  const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+  await fixture.redis.del(`${sessionKey}:presenter-lease`);
+  assert.ok(await fixture.redis.get(`${sessionKey}:presenter-ready`));
+
+  phone.send({ type: 'command', id: 'orphaned-ready', action: 'next' });
+  assert.deepEqual(await phone.waitFor('commandAck', (message) => message.id === 'orphaned-ready'), {
+    type: 'commandAck', id: 'orphaned-ready', accepted: false,
+  });
+  assert.equal(fixture.redis.commandKeys.has(`${sessionKey}:command:${paired.phoneId}:orphaned-ready`), false);
+  assert.equal(presenter.messages.some((message) => message.type === 'command'
+    && message.id.endsWith('.orphaned-ready')), false);
+
+  await phone.close();
+  const resumed = await fixture.connect('phone');
+  resumed.send({ type: 'resume', credential: paired.credential });
+  await resumed.waitFor('resumed');
+  assert.deepEqual(await resumed.waitFor('presenterStatus'), { type: 'presenterStatus', available: false });
+  const evalRedis = fixture.redis.eval.bind(fixture.redis);
+  let finishRelease;
+  const released = new Promise((resolve) => { finishRelease = resolve; });
+  fixture.redis.eval = async (script, keys, args) => {
+    const result = await evalRedis(script, keys, args);
+    if (script.includes('-- REDIS_OP:RELEASE_PRESENTER')) finishRelease();
+    return result;
+  };
+  await presenter.close();
+  await released;
+  assert.equal(await fixture.redis.get(`${sessionKey}:presenter-ready`), null);
+  assert.equal((await fixture.redis.get(sessionKey)).active, true);
+});
+
+test('hosted Redis relay ignores a stale phone poll after presenter disconnect', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const evalRedis = fixture.redis.eval.bind(fixture.redis);
+  let capturePoll;
+  let releasePoll;
+  const pollCaptured = new Promise((resolve) => { capturePoll = resolve; });
+  const pollGate = new Promise((resolve) => { releasePoll = resolve; });
+  let held = false;
+  fixture.redis.eval = async (script, keys, args) => {
+    const result = await evalRedis(script, keys, args);
+    if (!held && script.includes('-- REDIS_OP:POLL_SESSION') && args[5] === '0') {
+      held = true;
+      capturePoll();
+      await pollGate;
+    }
+    return result;
+  };
+  const { peer: phone } = await fixture.pairPhone(presenter);
+  await phone.waitFor('presenterStatus', (message) => message.available);
+  await pollCaptured;
+
+  await presenter.close();
+  assert.deepEqual(await phone.waitFor('presenterStatus', (message) => !message.available), {
+    type: 'presenterStatus', available: false,
+  });
+  releasePoll();
+  await assert.rejects(phone.waitFor('presenterStatus', (message) => message.available, 100),
+    /Timed out waiting for presenterStatus/);
 });
 
 test('hosted Redis relay rejects Canva commands until the target is ready', async (t) => {

@@ -194,7 +194,8 @@ local legacy = not found and session.phoneCredential == ARGV[1]
 if not found and not legacy then return 'invalid' end
 local leaseKey = legacy and KEYS[6] or KEYS[5]
 if redis.call('GET', leaseKey) ~= ARGV[7] then return 'invalid' end
-if redis.call('EXISTS', KEYS[7]) == 0 then return 'unavailable' end
+local readyOwner = redis.call('GET', KEYS[7])
+if not readyOwner or redis.call('GET', KEYS[8]) ~= readyOwner then return 'unavailable' end
 if session.state.target == 'canva' and session.state.ready ~= true then
   return 'not-ready'
 end
@@ -379,7 +380,8 @@ redis.call('EXPIRE', KEYS[2], ARGV[2])
 if ARGV[6] == '1' and redis.call('GET', KEYS[4]) == ARGV[1] then
   redis.call('EXPIRE', KEYS[4], ARGV[2])
 end
-local available = redis.call('EXISTS', KEYS[4]) == 1 and '1' or '0'
+local readyOwner = redis.call('GET', KEYS[4])
+local available = readyOwner and redis.call('GET', KEYS[5]) == readyOwner and '1' or '0'
 local inviteExpired = '0'
 if ARGV[5] == '1' and session.inviteExpiresAt > 0
   and tonumber(ARGV[3]) >= session.inviteExpiresAt and not session.inviteExpiredNotified then
@@ -402,10 +404,14 @@ return id
 
 const RELEASE_PRESENTER_SCRIPT = `
 -- REDIS_OP:RELEASE_PRESENTER
-if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
-redis.call('DEL', KEYS[2])
+local released = 0
+if redis.call('GET', KEYS[2]) == ARGV[1] then
+  redis.call('DEL', KEYS[2])
+  released = 1
+end
 if redis.call('GET', KEYS[3]) == ARGV[1] then
   redis.call('DEL', KEYS[3])
+  released = 1
   local raw = redis.call('GET', KEYS[1])
   if raw and cjson.decode(raw).active then
     local unavailable = {type = 'presenterStatus', available = false}
@@ -414,7 +420,7 @@ if redis.call('GET', KEYS[3]) == ARGV[1] then
     redis.call('PUBLISH', KEYS[5], cjson.encode({eventId = eventId, message = unavailable}))
   end
 end
-return 1
+return released
 `;
 
 const RELEASE_PHONE_SCRIPT = `
@@ -640,15 +646,16 @@ function readEventEnvelope(value) {
   return { id: parsed.eventId, message: parsed.message };
 }
 
-async function pollSession(redis, { sessionKey, leaseKey, streamKey, readyKey, connectionId, cursor, notifyInviteExpired = false, refreshPresenterReady = false }) {
-  const result = await redis.eval(POLL_SESSION_SCRIPT, [sessionKey, leaseKey, streamKey, readyKey], [
-    connectionId,
-    String(LEASE_TTL_SECONDS),
-    String(Date.now()),
-    cursor,
-    notifyInviteExpired ? '1' : '0',
-    refreshPresenterReady ? '1' : '0',
-  ]);
+async function pollSession(redis, { sessionKey, leaseKey, streamKey, readyKey, presenterLeaseKey, connectionId, cursor, notifyInviteExpired = false, refreshPresenterReady = false }) {
+  const result = await redis.eval(POLL_SESSION_SCRIPT,
+    [sessionKey, leaseKey, streamKey, readyKey, presenterLeaseKey], [
+      connectionId,
+      String(LEASE_TTL_SECONDS),
+      String(Date.now()),
+      cursor,
+      notifyInviteExpired ? '1' : '0',
+      refreshPresenterReady ? '1' : '0',
+    ]);
   if (!Array.isArray(result) || typeof result[0] !== 'string') throw new Error('Invalid poll result');
   const [status, rawSession, rawEvents, inviteExpired, presenterAvailable] = result;
   if (status !== 'ok') return { status };
@@ -912,7 +919,8 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
       if (closed || !authenticated) return;
       try {
         const result = await pollSession(redis, {
-          sessionKey, leaseKey, streamKey: phoneEvents, readyKey, connectionId, cursor,
+          sessionKey, leaseKey, streamKey: phoneEvents, readyKey, presenterLeaseKey: leaseKey,
+          connectionId, cursor,
           notifyInviteExpired: true, refreshPresenterReady: true,
         });
         if (result.status === 'missing' || result.status === 'ended') {
@@ -1016,6 +1024,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
     const presenterEvents = key(id, 'to-presenter');
     const phoneEvents = key(id, 'to-phone');
     const readyKey = key(id, 'presenter-ready');
+    const presenterLeaseKey = key(id, 'presenter-lease');
     const connectionId = token(12);
     let admitted = false;
     let credential = '';
@@ -1029,6 +1038,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
     let pendingDisconnect;
     let lastAvailability;
     let availabilityInitialized = false;
+    let availabilityRevision = 0;
     const sendAvailability = (available) => {
       if (!availabilityInitialized || available === lastAvailability) return;
       lastAvailability = available;
@@ -1040,12 +1050,23 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
       seenEvents.add(eventId);
       if (seenEvents.size > 256) seenEvents.delete(seenEvents.values().next().value);
       if (typeof message.phoneId === 'string' && message.phoneId !== phoneId) return;
-      if (message.type === 'presenterStatus') { sendAvailability(message.available === true); return; }
+      if (message.type === 'presenterStatus') {
+        availabilityRevision += 1;
+        sendAvailability(message.available === true);
+        return;
+      }
       if (typeof message.phoneId === 'string') {
         const targetedMessage = { ...message };
         delete targetedMessage.phoneId;
         socket.send(targetedMessage);
       } else socket.send(message);
+    };
+    const readAvailability = async () => {
+      const revision = availabilityRevision;
+      const [readyOwner, presenterOwner] = await Promise.all([
+        redis.get(readyKey), redis.get(presenterLeaseKey),
+      ]);
+      if (revision === availabilityRevision) sendAvailability(Boolean(readyOwner && readyOwner === presenterOwner));
     };
 
     const stop = async () => {
@@ -1068,16 +1089,22 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
     async function poll() {
       if (closed || !admitted) return;
       try {
+        const revision = availabilityRevision;
         const result = await pollSession(redis, {
-          sessionKey, leaseKey, streamKey: phoneEvents, readyKey, connectionId, cursor,
+          sessionKey, leaseKey, streamKey: phoneEvents, readyKey, presenterLeaseKey,
+          connectionId, cursor,
         });
         if (result.status === 'missing' || result.status === 'ended') {
           socket.send({ type: 'sessionEnded' }); socket.close(1000, 'Session ended'); return;
         }
         if (result.status !== 'ok') { socket.close(1008, 'Phone session replaced'); return; }
         cursor = result.cursor;
-        for (const event of result.events) sendEvent(event.id, event.message);
-        sendAvailability(result.presenterAvailable);
+        const staleAvailability = revision !== availabilityRevision;
+        for (const event of result.events) {
+          if (staleAvailability && event.message.type === 'presenterStatus') continue;
+          sendEvent(event.id, event.message);
+        }
+        if (!staleAvailability) sendAvailability(result.presenterAvailable);
       } catch {
         socket.close(1011, 'Relay storage unavailable');
         return;
@@ -1123,7 +1150,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
             });
             socket.send({ type: 'paired', credential, ...identity });
             availabilityInitialized = true;
-            sendAvailability(Boolean(await redis.get(readyKey)));
+            await readAvailability();
             if (latestSession?.state) socket.send({ type: 'state', ...latestSession.state });
             await deliver(id, 'presenter', presenterEvents, { type: 'phonePaired' });
             await publishPhoneList(id);
@@ -1153,7 +1180,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
             });
             socket.send({ type: 'resumed', ...identity });
             availabilityInitialized = true;
-            sendAvailability(Boolean(await redis.get(readyKey)));
+            await readAvailability();
             await publishPhoneList(id);
             void poll();
             return;
@@ -1182,7 +1209,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
           const result = await redis.eval(
             PHONE_COMMAND_SCRIPT,
             [sessionKey, dedupeKey, presenterEvents, channelKey(id, 'presenter'), leaseKey,
-              key(id, 'phone-lease'), readyKey],
+              key(id, 'phone-lease'), readyKey, presenterLeaseKey],
             [
               credential,
               message.action,
