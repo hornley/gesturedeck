@@ -251,6 +251,39 @@ test('reconnects after authentication and replays the latest state', () => {
   assert.deepEqual(events.at(-1), { type: 'closed' });
 });
 
+test('hosted presenter connections recycle every four minutes and replay state after reauthentication', () => {
+  const timers = fakeTimers();
+  const { client, socket } = setup({ reconnectOnClose: true, ...timers });
+  client.publishState({ index: 2, total: 5, busy: false });
+  socket.open();
+  socket.message({ type: 'presenterReady' });
+
+  assert.equal(timers.runNext(), 240_000);
+  assert.equal(socket.readyState, 3);
+  assert.equal(timers.runNext(), 250);
+
+  const reconnect = FakeWebSocket.instances[1];
+  reconnect.open();
+  reconnect.message({ type: 'presenterReady' });
+  assert.deepEqual(reconnect.sent, [
+    { type: 'presenter', credential: 'host-secret' },
+    { type: 'state', index: 2, total: 5, busy: false },
+  ]);
+  assert.equal([...timers.timers.values()][0].delay, 240_000);
+
+  client.close();
+  assert.equal(timers.timers.size, 0);
+});
+
+test('local presenter connections do not schedule hosted socket recycling', () => {
+  const timers = fakeTimers();
+  const { client, socket } = setup(timers);
+  socket.open();
+  socket.message({ type: 'presenterReady' });
+  assert.equal(timers.timers.size, 0);
+  client.close();
+});
+
 test('retry delays cap and reset after successful authentication', () => {
   const timers = fakeTimers();
   const { client, socket } = setup({ reconnectOnClose: true, ...timers });

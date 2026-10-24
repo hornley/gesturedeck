@@ -458,6 +458,46 @@ test('hosted presenter availability gates navigation without clearing phone cred
   assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
 });
 
+test('hosted phone connections recycle every four minutes and resume with the saved credential', () => {
+  const sessionId = 'fedcba9876543210';
+  const credential = 'cloud-phone-secret';
+  const result = setup({
+    hash: '',
+    storageImpl: storage({ [`phoneSessionCredential:${sessionId}`]: credential }),
+    locationExtras: {
+      protocol: 'https:', host: 'gesturedeck.example', pathname: `/r/${sessionId}`,
+      href: `https://gesturedeck.example/r/${sessionId}`,
+    },
+  });
+  const first = result.socket;
+  first.open();
+  first.message({
+    type: 'resumed', phoneId: 'cloud-phone-id', label: 'Phone 1', deviceType: 'phone',
+    state: { index: 2, total: 8, busy: false },
+  });
+
+  assert.equal(result.document.flushTimer(), 240_000);
+  assert.equal(first.readyState, 3);
+  assert.equal(result.sessionStorage.values.get(`phoneSessionCredential:${sessionId}`), credential);
+  assert.equal(result.document.getElementById('next-button').disabled, true);
+  assert.equal(result.document.flushTimer(), 250);
+
+  const reconnect = FakeWebSocket.instances[1];
+  reconnect.open();
+  assert.deepEqual(reconnect.sent, [{ type: 'resume', credential }]);
+  reconnect.message({
+    type: 'resumed', phoneId: 'cloud-phone-id', label: 'Phone 1', deviceType: 'phone',
+    state: { index: 3, total: 8, busy: false },
+  });
+  reconnect.message({ type: 'presenterStatus', available: true });
+  assert.equal(result.document.getElementById('slide-position').textContent, '4 / 8');
+  assert.equal(result.document.getElementById('next-button').disabled, false);
+  assert.equal([...result.document.timers.values()][0].delay, 240_000);
+
+  result.phone.destroy();
+  assert.equal(result.document.timers.size, 0);
+});
+
 test('resume rejection and session end clear the stored credential', () => {
   for (const message of [
     { type: 'resumeRejected', reason: 'invalid' },

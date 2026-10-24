@@ -1,5 +1,6 @@
 const PRESENTER_PATH = '/ws/mobile-remote/presenter';
 const RETRY_DELAYS = [250, 500, 1_000, 2_000, 4_000, 5_000];
+const HOSTED_SOCKET_RECYCLE_DELAY = 4 * 60 * 1_000;
 const PHONE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const DEVICE_TYPES = new Set(['iphone', 'android-phone', 'phone']);
 
@@ -99,6 +100,7 @@ export function createMobileRemoteClient({
   let rejected = false;
   let closed = false;
   let retryTimer;
+  let recycleTimer;
   let retryAttempt = 0;
   let retryAlreadyConnected = false;
   let latestState;
@@ -124,6 +126,11 @@ export function createMobileRemoteClient({
     return true;
   }
 
+  function clearRecycle() {
+    if (recycleTimer !== undefined) clearTimeoutImpl(recycleTimer);
+    recycleTimer = undefined;
+  }
+
   function handleMessage(event, sourceSocket) {
     if (closed || rejected || socket !== sourceSocket || !isOpen() || typeof event?.data !== 'string') return;
     let message;
@@ -133,6 +140,14 @@ export function createMobileRemoteClient({
       authenticated = true;
       everAuthenticated = true;
       retryAttempt = 0;
+      clearRecycle();
+      if (reconnectOnClose) {
+        recycleTimer = setTimeoutImpl(() => {
+          recycleTimer = undefined;
+          if (socket === sourceSocket && authenticated && isOpen()) sourceSocket.close();
+        }, HOSTED_SOCKET_RECYCLE_DELAY);
+        recycleTimer?.unref?.();
+      }
       if (latestState) send({ type: 'state', ...latestState });
       onConnection({ type: 'authenticated' });
       return;
@@ -140,6 +155,7 @@ export function createMobileRemoteClient({
     if (message.type === 'presenterRejected'
       && Object.keys(message).every((key) => key === 'type' || key === 'reason')) {
       rejected = true;
+      clearRecycle();
       const rejection = { type: 'rejected' };
       if (typeof message.reason === 'string') rejection.reason = message.reason;
       if (reconnectOnClose && everAuthenticated && !authenticated && rejection.reason === 'already-connected') retryAlreadyConnected = true;
@@ -154,6 +170,7 @@ export function createMobileRemoteClient({
     }
     if (message.type === 'sessionEnded' && Object.keys(message).length === 1) {
       closed = true;
+      clearRecycle();
       if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
       retryTimer = undefined;
       onConnection({ type: 'sessionEnded' });
@@ -215,6 +232,7 @@ export function createMobileRemoteClient({
     currentSocket.onclose = () => {
       if (socket === currentSocket) socket = undefined;
       authenticated = false;
+      clearRecycle();
       if (closed) return;
       const retryRejected = retryAlreadyConnected;
       retryAlreadyConnected = false;
@@ -230,6 +248,7 @@ export function createMobileRemoteClient({
   function close() {
     if (closed) return;
     closed = true;
+    clearRecycle();
     if (retryTimer !== undefined) clearTimeoutImpl(retryTimer);
     retryTimer = undefined;
     authenticated = false;

@@ -2,6 +2,7 @@ const PHONE_PATH = '/ws/mobile-remote/phone';
 const CREDENTIAL_KEY = 'phoneSessionCredential';
 const LABEL_KEY = 'phoneSessionLabel';
 const RETRY_DELAYS = [250, 500, 1_000, 2_000, 4_000, 5_000];
+const HOSTED_SOCKET_RECYCLE_DELAY = 4 * 60 * 1_000;
 const DEVICE_TYPES = new Set(['iphone', 'android-phone', 'phone']);
 const PHONE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -134,6 +135,7 @@ export function mountMobileRemotePhone({
   let invite = readInvite(location.hash);
   let socket;
   let retryTimer;
+  let recycleTimer;
   let retryAttempt = 0;
   let currentState;
   let ready = false;
@@ -242,6 +244,21 @@ export function mountMobileRemotePhone({
   function clearRetry() {
     if (retryTimer !== undefined) cancelTimer(retryTimer);
     retryTimer = undefined;
+  }
+
+  function clearRecycle() {
+    if (recycleTimer !== undefined) cancelTimer(recycleTimer);
+    recycleTimer = undefined;
+  }
+
+  function scheduleRecycle(target) {
+    clearRecycle();
+    if (!cloudSessionId) return;
+    recycleTimer = schedule(() => {
+      recycleTimer = undefined;
+      if (socket === target && ready && !terminal && !explicitlyDisconnected) target.close();
+    }, HOSTED_SOCKET_RECYCLE_DELAY);
+    recycleTimer?.unref?.();
   }
 
   function clearCredential() {
@@ -370,6 +387,7 @@ export function mountMobileRemotePhone({
       const inviteRemoved = clearInviteFragment();
       ready = true;
       retryAttempt = 0;
+      scheduleRecycle(target);
       setStatus(presenterAvailable ? 'Connected to presenter' : 'Presenter reconnecting…',
         presenterAvailable ? 'connected' : 'error');
       renderControls();
@@ -387,6 +405,7 @@ export function mountMobileRemotePhone({
       if (hasPhoneIdentity) setConnectedAs(message.label);
       ready = true;
       retryAttempt = 0;
+      scheduleRecycle(target);
       setStatus(presenterAvailable ? 'Connected to presenter' : 'Presenter reconnecting…',
         presenterAvailable ? 'connected' : 'error');
       renderControls();
@@ -412,6 +431,7 @@ export function mountMobileRemotePhone({
 
     if (message.type === 'resumeRejected') {
       clearRetry();
+      clearRecycle();
       clearCredential();
       terminal = true;
       showRecovery('This phone session is no longer valid. Pair again from the presenter.', 'invalid-session');
@@ -421,6 +441,7 @@ export function mountMobileRemotePhone({
 
     if (message.type === 'sessionEnded') {
       clearRetry();
+      clearRecycle();
       clearCredential();
       terminal = true;
       showRecovery('The presenter ended this remote session. Pair again from GestureDeck to reconnect.', 'session-ended');
@@ -488,6 +509,7 @@ export function mountMobileRemotePhone({
     nextSocket.onmessage = (event) => handleMessage(nextSocket, event);
     nextSocket.onclose = () => {
       if (socket === nextSocket) socket = undefined;
+      clearRecycle();
       ready = false;
       if (!credential) {
         pairingInProgress = false;
@@ -509,6 +531,7 @@ export function mountMobileRemotePhone({
   function disconnect() {
     if (terminal || explicitlyDisconnected || disconnectRequested) return;
     clearRetry();
+    clearRecycle();
     if (ready && isOpen()) {
       if (!finishDisconnect(socket)) {
         disconnectRequested = true;
@@ -540,6 +563,7 @@ export function mountMobileRemotePhone({
     explicitlyDisconnected = true;
     terminal = true;
     clearRetry();
+    clearRecycle();
     clearCredential();
     ready = false;
     renderControls();
@@ -596,6 +620,7 @@ export function mountMobileRemotePhone({
     disconnect,
     destroy() {
       clearRetry();
+      clearRecycle();
       terminal = true;
       socket?.close();
     },
