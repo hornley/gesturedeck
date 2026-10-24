@@ -864,6 +864,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
     let closed = false;
     let unsubscribeEvents;
     let lastPhoneList = '';
+    let stateReadinessLogged = false;
     const seenEvents = new Set();
     const sendPhoneList = (phones) => {
       const fingerprint = JSON.stringify(phones);
@@ -967,6 +968,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
             return;
           }
           authenticated = true;
+          console.info('Cloud relay presenter authenticated');
           cursor = await latestEventId(redis, phoneEvents);
           const peers = localPeers(id);
           peers.presenter = socket;
@@ -984,11 +986,20 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         }
         if (message.type === 'state') {
           const state = sanitizeState(message);
-          if (!state) return;
+          if (!state) {
+            if (!stateReadinessLogged) console.warn('Cloud relay rejected the initial presenter state');
+            stateReadinessLogged = true;
+            return;
+          }
           const updated = await redis.eval(UPDATE_STATE_SCRIPT,
             [sessionKey, leaseKey, key(id, 'to-phone'), channelKey(id, 'phone'), readyKey],
             [JSON.stringify(state), String(Date.now()), connectionId,
               String(SESSION_TTL_SECONDS), String(LEASE_TTL_SECONDS)]);
+          if (!stateReadinessLogged) {
+            if (updated === 'ok') console.info('Cloud relay accepted the initial presenter state');
+            else console.warn('Cloud relay rejected the initial presenter state:', updated);
+            stateReadinessLogged = true;
+          }
           if (closeForPresenterStatus(updated)) return;
         } else if (message.type === 'commandAck' && typeof message.id === 'string' && typeof message.accepted === 'boolean') {
           const separator = message.id.indexOf('.');
@@ -1042,6 +1053,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
     const sendAvailability = (available) => {
       if (!availabilityInitialized || available === lastAvailability) return;
       lastAvailability = available;
+      console.info(`Cloud relay phone presenter availability: ${available}`);
       socket.send({ type: 'presenterStatus', available });
     };
     const seenEvents = new Set();
