@@ -103,6 +103,13 @@ function closeServer(server) {
   return new Promise((resolve) => server.close(resolve));
 }
 
+function logWebSocketClose(side, code, reason) {
+  console.info(`[mobile-remote] ${side} WebSocket closed ${JSON.stringify({
+    code: code ?? null,
+    reason: reason ?? '',
+  })}`);
+}
+
 export function attachMobileRemote(server, {
   root = path.resolve(import.meta.dirname, '..'),
   interfaces = os.networkInterfaces,
@@ -172,7 +179,11 @@ export function attachMobileRemote(server, {
         if (!authenticated) socket.close(1008, 'Authentication timeout');
       }, authenticationTimeoutMs);
       timer?.unref?.();
-      socket.once('close', () => { presenterSockets.delete(socket); clearAuthTimeout(timer); });
+      socket.once('close', (code, reason) => {
+        logWebSocketClose('presenter', code, reason);
+        presenterSockets.delete(socket);
+        clearAuthTimeout(timer);
+      });
       socket.on('message', (message) => {
         if (!authenticated) {
           if (!isRecord(message) || Object.keys(message).sort().join(',') !== 'credential,type' || message.type !== 'presenter' || typeof message.credential !== 'string' || !session) {
@@ -263,7 +274,11 @@ export function attachMobileRemote(server, {
             if (!admitted) socket.close(1008, 'Authentication timeout');
           }, authenticationTimeoutMs);
           timer?.unref?.();
-          socket.once('close', () => { pendingPhoneSockets.delete(socket); clearAuthTimeout(timer); });
+          socket.once('close', (code, reason) => {
+            logWebSocketClose('phone', code, reason);
+            pendingPhoneSockets.delete(socket);
+            clearAuthTimeout(timer);
+          });
           socket.on('message', (message) => {
             if (!isRecord(message)) { socket.close(1007, 'Expected object'); return; }
             if (!admitted && message.type !== 'pair' && message.type !== 'resume') { socket.close(1008, 'Pairing required'); return; }

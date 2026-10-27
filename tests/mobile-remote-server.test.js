@@ -239,6 +239,16 @@ function clientFrame(value) {
   return Buffer.concat([header, mask, masked]);
 }
 
+function clientCloseFrame(code, reason = '') {
+  const reasonBytes = Buffer.from(reason, 'utf8');
+  const payload = Buffer.alloc(2 + reasonBytes.length);
+  payload.writeUInt16BE(code, 0);
+  reasonBytes.copy(payload, 2);
+  const mask = Buffer.from([1, 2, 3, 4]);
+  for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4];
+  return Buffer.concat([Buffer.from([0x88, 0x80 | payload.length]), mask, payload]);
+}
+
 function serverMessage(frame) {
   const length = frame[1] & 0x7f;
   const offset = length === 126 ? 4 : 2;
@@ -325,6 +335,52 @@ test('phone pairing flows through the coordinator and presenter disconnect close
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(remote.listener, undefined);
     bad.destroy(); consumed.destroy(); resumed.destroy();
+  } finally { await remote.close(); }
+});
+
+test('local WebSocket close logs identify the endpoint and include safe close details', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'info', (message) => logs.push(message));
+  const main = http.createServer();
+  main.address = () => ({ port: 5173 });
+  const remote = attachMobileRemote(main, { interfaces, createListener: fakeListener, createQrDataUrl: () => 'data:qr' });
+  try {
+    const start = JSON.parse((await fakeRequest(main, '/api/mobile-remote/start', {
+      body: JSON.stringify({ address: '192.168.1.12', state: { index: 0, total: 2, busy: false } }),
+    })).body);
+    const presenter = upgrade(main, '/ws/mobile-remote/presenter', {
+      host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173', peer: '127.0.0.1',
+    });
+    presenter.emit('data', clientFrame({ type: 'presenter', credential: start.hostCredential }));
+    const listener = remote.listener;
+    const phone = upgrade(listener, '/ws/mobile-remote/phone', {
+      host: '192.168.1.12:43123', origin: 'http://192.168.1.12:43123', peer: '192.168.1.2',
+    });
+    phone.emit('data', clientFrame({ type: 'pair', invite: new URL(start.fallbackUrl).hash.slice(1) }));
+    const paired = serverMessage(phone.writes[1]);
+
+    phone.emit('data', clientCloseFrame(1001, 'hotspot\r\ninterruption'));
+    phone.destroy();
+    const phonePrefix = '[mobile-remote] phone WebSocket closed ';
+    const phoneLog = logs.find((line) => line.startsWith(phonePrefix));
+    assert.ok(phoneLog);
+    assert.deepEqual(JSON.parse(phoneLog.slice(phonePrefix.length)), {
+      code: 1001, reason: 'hotspot\r\ninterruption',
+    });
+    assert.doesNotMatch(phoneLog, /[\r\n]/);
+    assert.equal([start.hostCredential, paired.credential, paired.phoneId, paired.label]
+      .some((secret) => phoneLog.includes(secret)), false);
+    assert.equal(remote.listener, listener);
+
+    presenter.emit('data', clientCloseFrame(1000, 'presenter closed'));
+    presenter.destroy();
+    const presenterPrefix = '[mobile-remote] presenter WebSocket closed ';
+    const presenterLog = logs.find((line) => line.startsWith(presenterPrefix));
+    assert.ok(presenterLog);
+    assert.deepEqual(JSON.parse(presenterLog.slice(presenterPrefix.length)), {
+      code: 1000, reason: 'presenter closed',
+    });
+    assert.equal(remote.listener, undefined);
   } finally { await remote.close(); }
 });
 
