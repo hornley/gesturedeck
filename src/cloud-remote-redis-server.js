@@ -381,7 +381,9 @@ if ARGV[6] == '1' and redis.call('GET', KEYS[4]) == ARGV[1] then
   redis.call('EXPIRE', KEYS[4], ARGV[2])
 end
 local readyOwner = redis.call('GET', KEYS[4])
-local available = readyOwner and redis.call('GET', KEYS[5]) == readyOwner and '1' or '0'
+local presenterOwner = redis.call('GET', KEYS[5])
+local ownersMatch = readyOwner and presenterOwner == readyOwner
+local available = ownersMatch and '1' or '0'
 local inviteExpired = '0'
 if ARGV[5] == '1' and session.inviteExpiresAt > 0
   and tonumber(ARGV[3]) >= session.inviteExpiresAt and not session.inviteExpiredNotified then
@@ -391,7 +393,8 @@ if ARGV[5] == '1' and session.inviteExpiresAt > 0
   inviteExpired = '1'
 end
 local events = redis.call('XREAD', 'COUNT', 100, 'STREAMS', KEYS[3], ARGV[4])
-return {'ok', cjson.encode(session), cjson.encode(events or {}), inviteExpired, available}
+return {'ok', cjson.encode(session), cjson.encode(events or {}), inviteExpired, available,
+  readyOwner and '1' or '0', presenterOwner and '1' or '0', ownersMatch and '1' or '0'}
 `;
 
 const PUBLISH_EVENT_SCRIPT = `
@@ -657,7 +660,8 @@ async function pollSession(redis, { sessionKey, leaseKey, streamKey, readyKey, p
       refreshPresenterReady ? '1' : '0',
     ]);
   if (!Array.isArray(result) || typeof result[0] !== 'string') throw new Error('Invalid poll result');
-  const [status, rawSession, rawEvents, inviteExpired, presenterAvailable] = result;
+  const [status, rawSession, rawEvents, inviteExpired, presenterAvailable,
+    readyMarkerPresent, presenterLeasePresent, ownersMatch] = result;
   if (status !== 'ok') return { status };
   const session = isRecord(rawSession) ? rawSession : JSON.parse(rawSession);
   const streams = Array.isArray(rawEvents) ? rawEvents : JSON.parse(rawEvents);
@@ -666,6 +670,11 @@ async function pollSession(redis, { sessionKey, leaseKey, streamKey, readyKey, p
     session,
     inviteExpired: inviteExpired === '1',
     presenterAvailable: presenterAvailable === '1',
+    readiness: {
+      readyMarkerPresent: readyMarkerPresent === '1',
+      presenterLeasePresent: presenterLeasePresent === '1',
+      ownersMatch: ownersMatch === '1',
+    },
     ...eventsFromStreamResult(streams, cursor),
   };
 }
@@ -942,6 +951,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
             attempt: pollDiagnostics,
             status: result.status,
             available: result.presenterAvailable ?? null,
+            readiness: result.readiness ?? null,
             eventCount: result.events?.length ?? 0,
           })}`);
         }

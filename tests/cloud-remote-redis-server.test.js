@@ -294,8 +294,12 @@ class MemoryRedis {
       const streams = events.length
         ? [[keys[2], events.map(({ id, message }) => [id, ['data', JSON.stringify(message)]])]]
         : [];
+      const readyOwner = this.values.get(keys[3]);
+      const presenterOwner = this.values.get(keys[4]);
       return ['ok', JSON.stringify(session), JSON.stringify(streams), session.inviteExpiredNotified ? '1' : '0',
-        this.values.get(keys[3]) && this.values.get(keys[3]) === this.values.get(keys[4]) ? '1' : '0'];
+        readyOwner && readyOwner === presenterOwner ? '1' : '0',
+        readyOwner ? '1' : '0', presenterOwner ? '1' : '0',
+        readyOwner && readyOwner === presenterOwner ? '1' : '0'];
     }
 
     if (operation === 'PUBLISH_EVENT') {
@@ -501,6 +505,10 @@ test('hosted Redis WebSocket close logs identify the endpoint and safe close det
   assert.match(pollLog, /^Cloud relay presenter poll 1 started$/);
   assert.match(pollCompletedLog, /^Cloud relay presenter poll completed /);
   assert.match(pollCompletedLog, /"status":"ok"/);
+  const pollResult = JSON.parse(pollCompletedLog.slice(pollCompletedLog.indexOf('{')));
+  assert.equal(typeof pollResult.readiness.readyMarkerPresent, 'boolean');
+  assert.equal(pollResult.readiness.presenterLeasePresent, true);
+  assert.equal(pollResult.readiness.ownersMatch, pollResult.available);
   const phone = await fixture.pairPhone(presenter);
 
   const phoneLogPromise = once(closeLogs, 'close');
