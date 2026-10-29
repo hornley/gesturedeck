@@ -296,10 +296,9 @@ class MemoryRedis {
         : [];
       const readyOwner = this.values.get(keys[3]);
       const presenterOwner = this.values.get(keys[4]);
-      return ['ok', JSON.stringify(session), JSON.stringify(streams), session.inviteExpiredNotified ? '1' : '0',
-        readyOwner && readyOwner === presenterOwner ? '1' : '0',
-        readyOwner ? '1' : '0', presenterOwner ? '1' : '0',
-        readyOwner && readyOwner === presenterOwner ? '1' : '0'];
+      return ['ok', JSON.stringify(session), JSON.stringify(streams), Number(Boolean(session.inviteExpiredNotified)),
+        Number(Boolean(readyOwner && readyOwner === presenterOwner)), Number(Boolean(readyOwner)),
+        Number(Boolean(presenterOwner)), Number(Boolean(readyOwner && readyOwner === presenterOwner))];
     }
 
     if (operation === 'PUBLISH_EVENT') {

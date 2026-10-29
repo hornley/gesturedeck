@@ -18,6 +18,7 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{16}$/;
 const PHONE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const DEVICE_TYPES = new Set(['iphone', 'android-phone', 'phone']);
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isScriptFlag = (value) => value === '1' || value === 1;
 
 const PRESENTER_AUTH_SCRIPT = `
 -- REDIS_OP:PRESENTER_AUTH
@@ -668,12 +669,12 @@ async function pollSession(redis, { sessionKey, leaseKey, streamKey, readyKey, p
   return {
     status,
     session,
-    inviteExpired: inviteExpired === '1',
-    presenterAvailable: presenterAvailable === '1',
+    inviteExpired: isScriptFlag(inviteExpired),
+    presenterAvailable: isScriptFlag(presenterAvailable),
     readiness: {
-      readyMarkerPresent: readyMarkerPresent === '1',
-      presenterLeasePresent: presenterLeasePresent === '1',
-      ownersMatch: ownersMatch === '1',
+      readyMarkerPresent: isScriptFlag(readyMarkerPresent),
+      presenterLeasePresent: isScriptFlag(presenterLeasePresent),
+      ownersMatch: isScriptFlag(ownersMatch),
     },
     ...eventsFromStreamResult(streams, cursor),
   };
