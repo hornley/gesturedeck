@@ -483,11 +483,24 @@ test('hosted Redis WebSocket close logs identify the endpoint and safe close det
   const closeLogs = new EventEmitter();
   t.mock.method(console, 'info', (message) => {
     logs.push(message);
+    if (message.startsWith('Cloud relay presenter poll ') && message.endsWith(' started')) {
+      closeLogs.emit('pollStarted', message);
+    }
+    if (message.startsWith('Cloud relay presenter poll completed')) {
+      closeLogs.emit('pollCompleted', message);
+    }
     closeLogs.emit('close', message);
   });
   const fixture = await createFixture();
   t.after(() => fixture.close());
+  const pollLogPromise = once(closeLogs, 'pollStarted');
+  const pollCompletedPromise = once(closeLogs, 'pollCompleted');
   const presenter = await fixture.presenter();
+  const [pollLog] = await pollLogPromise;
+  const [pollCompletedLog] = await pollCompletedPromise;
+  assert.match(pollLog, /^Cloud relay presenter poll 1 started$/);
+  assert.match(pollCompletedLog, /^Cloud relay presenter poll completed /);
+  assert.match(pollCompletedLog, /"status":"ok"/);
   const phone = await fixture.pairPhone(presenter);
 
   const phoneLogPromise = once(closeLogs, 'close');

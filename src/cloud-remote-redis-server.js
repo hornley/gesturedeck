@@ -874,6 +874,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
     let unsubscribeEvents;
     let lastPhoneList = '';
     let stateReadinessLogged = false;
+    let pollDiagnostics = 0;
     const seenEvents = new Set();
     const sendPhoneList = (phones) => {
       const fingerprint = JSON.stringify(phones);
@@ -927,12 +928,23 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
 
     async function poll() {
       if (closed || !authenticated) return;
+      const diagnosticPoll = pollDiagnostics < 3;
+      pollDiagnostics += 1;
+      if (diagnosticPoll) console.info(`Cloud relay presenter poll ${pollDiagnostics} started`);
       try {
         const result = await pollSession(redis, {
           sessionKey, leaseKey, streamKey: phoneEvents, readyKey, presenterLeaseKey: leaseKey,
           connectionId, cursor,
           notifyInviteExpired: true, refreshPresenterReady: true,
         });
+        if (diagnosticPoll) {
+          console.info(`Cloud relay presenter poll completed ${JSON.stringify({
+            attempt: pollDiagnostics,
+            status: result.status,
+            available: result.presenterAvailable ?? null,
+            eventCount: result.events?.length ?? 0,
+          })}`);
+        }
         if (result.status === 'missing' || result.status === 'ended') {
           socket.send({ type: 'sessionEnded' }); socket.close(1000, 'Session ended'); return;
         }
