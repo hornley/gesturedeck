@@ -478,6 +478,46 @@ async function rejectPresenterAuth(fixture, credential = fixture.pairing.hostCre
   return peer.waitFor('presenterRejected');
 }
 
+test('hosted Redis WebSocket close logs identify the endpoint and safe close details', async (t) => {
+  const logs = [];
+  const closeLogs = new EventEmitter();
+  t.mock.method(console, 'info', (message) => {
+    logs.push(message);
+    closeLogs.emit('close', message);
+  });
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const phone = await fixture.pairPhone(presenter);
+
+  const phoneLogPromise = once(closeLogs, 'close');
+  const phoneClosed = once(phone.peer.socket, 'close');
+  phone.peer.socket.close(1001, 'hotspot\r\ninterruption');
+  await phoneClosed;
+  const [phoneLog] = await phoneLogPromise;
+  const phonePrefix = '[cloud-remote] phone WebSocket closed ';
+  assert.ok(phoneLog.startsWith(phonePrefix));
+  assert.deepEqual(JSON.parse(phoneLog.slice(phonePrefix.length)), {
+    code: 1001, reason: 'hotspot\r\ninterruption',
+  });
+  assert.doesNotMatch(phoneLog, /[\r\n]/);
+  assert.equal([
+    fixture.pairing.hostCredential, phone.paired.credential,
+    phone.paired.phoneId, phone.paired.label,
+  ].some((secret) => phoneLog.includes(secret)), false);
+
+  const presenterLogPromise = once(closeLogs, 'close');
+  const presenterClosed = once(presenter.socket, 'close');
+  presenter.socket.close(1000, 'presenter closed');
+  await presenterClosed;
+  const [presenterLog] = await presenterLogPromise;
+  const presenterPrefix = '[cloud-remote] presenter WebSocket closed ';
+  assert.ok(presenterLog.startsWith(presenterPrefix));
+  assert.deepEqual(JSON.parse(presenterLog.slice(presenterPrefix.length)), {
+    code: 1000, reason: 'presenter closed',
+  });
+});
+
 test('hosted Redis relay authenticates fresh Canva sessions and canonicalizes Redis state', async (t) => {
   const cases = [
     {

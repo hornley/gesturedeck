@@ -677,6 +677,13 @@ async function latestEventId(redis, streamKey) {
   return '0-0';
 }
 
+function logWebSocketClose(side, code, reason) {
+  console.info(`[cloud-remote] ${side} WebSocket closed ${JSON.stringify({
+    code: code ?? null,
+    reason: reason ?? '',
+  })}`);
+}
+
 function attachCloudWebSocketServer(server, { path, verifyRequest, onConnection }) {
   const webSockets = new WebSocketServer({
     server,
@@ -812,6 +819,8 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
 
   function onRemoteConnection(socket, request, route) {
     sockets.add(socket);
+    const side = route === '/ws/cloud-remote/presenter' ? 'presenter' : 'phone';
+    socket.once('close', (code, reason) => logWebSocketClose(side, code, reason));
     if (route === '/ws/cloud-remote/presenter') void handlePresenter(socket, request);
     else void handlePhone(socket, request);
   }
