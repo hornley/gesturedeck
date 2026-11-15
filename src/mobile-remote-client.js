@@ -135,12 +135,15 @@ export function createMobileRemoteClient({
     }
     if (message.type === 'presenterRejected'
       && Object.keys(message).every((key) => key === 'type' || key === 'reason')) {
+      if (autoReconnect && message.reason === 'already-connected') {
+        retry(target);
+        return;
+      }
       rejected = true;
       const rejection = { type: 'rejected' };
       if (typeof message.reason === 'string') rejection.reason = message.reason;
       onConnection(rejection);
-      if (autoReconnect && message.reason === 'already-connected') retry(target);
-      else terminal = true;
+      terminal = true;
       return;
     }
     if (!authenticated) return;
@@ -170,7 +173,7 @@ export function createMobileRemoteClient({
         if (disposed || !commandResults.has(message.id)) return;
         const value = Boolean(accepted);
         commandResults.set(message.id, value);
-        send({ type: 'commandAck', id: message.id, accepted: value });
+        if (authenticated) send({ type: 'commandAck', id: message.id, accepted: value });
       };
       if (result && typeof result.then === 'function') Promise.resolve(result).then(complete, () => complete(false));
       else complete(result);

@@ -268,11 +268,44 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
   deferred.client.close();
 });
 
+test('async command results wait for replacement authentication before replay acknowledgement', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let resolveCommand;
+  let calls = 0;
+  const { client, socket: first } = setup({
+    autoReconnect: true,
+    onCommand: () => {
+      calls++;
+      return new Promise((resolve) => { resolveCommand = resolve; });
+    },
+  }, t);
+  first.open();
+  first.message({ type: 'presenterReady' });
+  first.message({ type: 'command', id: 'auth-pending', action: 'next' });
+  first.close();
+  t.mock.timers.tick(250);
+
+  const replacement = FakeWebSocket.instances[1];
+  replacement.open();
+  resolveCommand(true);
+  await Promise.resolve();
+  assert.equal(replacement.sent.some(({ type }) => type === 'commandAck'), false);
+
+  replacement.message({ type: 'presenterReady' });
+  replacement.message({ type: 'command', id: 'auth-pending', action: 'next' });
+  assert.equal(calls, 1);
+  assert.deepEqual(replacement.sent.at(-1), {
+    type: 'commandAck', id: 'auth-pending', accepted: true,
+  });
+  client.close();
+});
+
 test('retryable and terminal auth outcomes are fenced from stale sockets', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const retry = setup({ autoReconnect: true }, t);
   retry.socket.open();
   retry.socket.message({ type: 'presenterRejected', reason: 'already-connected' });
+  assert.deepEqual(retry.events, [{ type: 'reconnecting' }]);
   t.mock.timers.tick(250);
   assert.equal(FakeWebSocket.instances.length, 2);
   retry.client.close();
