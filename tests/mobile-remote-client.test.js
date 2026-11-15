@@ -165,10 +165,9 @@ test('reconnection is opt-in and waits 250ms after a transport close', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const local = setup({}, t);
   local.socket.close();
-  assert.equal(FakeWebSocket.instances.length, 1);
-  local.client.close();
   t.mock.timers.tick(250);
   assert.equal(FakeWebSocket.instances.length, 1);
+  local.client.close();
 
   const hosted = setup({ autoReconnect: true }, t);
   hosted.socket.close();
@@ -300,8 +299,8 @@ test('retryable and terminal auth outcomes are fenced from stale sockets', async
   const explicit = setup({ autoReconnect: true }, t);
   const old = explicit.socket;
   const oldMessage = old.onmessage;
-  explicit.client.close();
   old.close();
+  explicit.client.close();
   t.mock.timers.tick(500);
   old.open();
   oldMessage({ data: JSON.stringify({ type: 'presenterReady' }) });
