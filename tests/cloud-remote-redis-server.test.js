@@ -651,6 +651,78 @@ test('hosted Redis relay rejects Canva commands until the target is ready', asyn
   });
 });
 
+test('hosted Redis presenter disconnect preserves the session and paired phone credential', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const phone = await fixture.pairPhone(presenter);
+  const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+
+  await presenter.close();
+
+  assert.equal((await fixture.redis.get(sessionKey)).active, true);
+  const resumed = await fixture.connect('phone');
+  resumed.send({ type: 'resume', credential: phone.paired.credential });
+  assert.deepEqual(await resumed.waitFor('resumed'), {
+    type: 'resumed', phoneId: phone.paired.phoneId, label: 'Phone', deviceType: 'phone',
+    state: { index: 0, total: 12, busy: false },
+  });
+  assert.equal(phone.peer.messages.some((message) => message.type === 'sessionEnded'), false);
+});
+
+test('hosted Redis relay rejects phone commands while the presenter is offline', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const phone = await fixture.pairPhone(presenter);
+  const commandStream = `gesturedeck:${fixture.pairing.sessionId}:to-presenter`;
+
+  await presenter.close();
+  assert.equal((await fixture.redis.get(`gesturedeck:${fixture.pairing.sessionId}`)).active, true);
+  phone.peer.send({ type: 'command', id: 'offline-next', action: 'next' });
+
+  assert.deepEqual(await phone.peer.waitFor('commandAck'), {
+    type: 'commandAck', id: 'offline-next', accepted: false,
+  });
+  assert.equal((fixture.redis.streams.get(commandStream) ?? []).some(({ message }) =>
+    message.type === 'command' && message.id === `${phone.paired.phoneId}.offline-next`), false);
+});
+
+test('hosted Redis relay stale presenter close preserves a replacement lease and session', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+  const leaseKey = `${sessionKey}:presenter-lease`;
+
+  await fixture.redis.set(leaseKey, 'replacement-connection');
+  await presenter.close();
+
+  assert.equal(await fixture.redis.get(leaseKey), 'replacement-connection');
+  assert.equal((await fixture.redis.get(sessionKey)).active, true);
+});
+
+test('hosted Redis explicit Stop ends the session and revokes paired phone credentials', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const phone = await fixture.pairPhone(presenter);
+
+  const stopped = await postCloudRoute(fixture.server.address().port, 'stop', {
+    sessionId: fixture.pairing.sessionId,
+    hostCredential: fixture.pairing.hostCredential,
+  });
+
+  assert.equal(stopped.status, 200);
+  assert.equal((await fixture.redis.get(`gesturedeck:${fixture.pairing.sessionId}`)).active, false);
+  assert.deepEqual(await phone.peer.waitFor('sessionEnded'), { type: 'sessionEnded' });
+  const resumed = await fixture.connect('phone');
+  resumed.send({ type: 'resume', credential: phone.paired.credential });
+  assert.deepEqual(await resumed.waitFor('resumeRejected'), {
+    type: 'resumeRejected', reason: 'invalid',
+  });
+});
+
 test('hosted Redis relay routes phone lists, state, commands, and acknowledgements across function instances', async (t) => {
   const fixture = await createFixture();
   const secondServer = createServer();
