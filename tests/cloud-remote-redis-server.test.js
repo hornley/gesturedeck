@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { EventEmitter, once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { attachRedisCloudRemote } from '../src/cloud-remote-redis-server.js';
 
@@ -201,7 +202,7 @@ class MemoryRedis {
       if (!this.values.has(keys[6])) return 'presenter-unavailable';
       if (this.commandKeys.has(keys[1])) return 'duplicate';
       this.commandKeys.add(keys[1]);
-      if (args[5] === '1') this.#publish(keys[2], keys[3], JSON.parse(args[4]));
+      if (args[5] === '1') this.#publish(keys[2], keys[3], JSON.parse(args[4]), 2000);
       return 'ok';
     }
 
@@ -313,7 +314,7 @@ class MemoryRedis {
 
     if (operation === 'PUBLISH_EVENT') {
       const message = JSON.parse(args[0]);
-      return this.#publish(keys[0], keys[1], message);
+      return this.#publish(keys[0], keys[1], message, 2000);
     }
 
     if (operation === 'RELEASE_PRESENTER') {
@@ -334,11 +335,11 @@ class MemoryRedis {
     throw new Error(`Fake Redis received unsupported script operation: ${operation}`);
   }
 
-  #publish(streamKey, channel, message) {
+  #publish(streamKey, channel, message, maxLength) {
     const entries = this.streams.get(streamKey) ?? [];
     const id = `${++this.streamOrdinal}-0`;
     entries.push({ id, message: structuredClone(message) });
-    if (entries.length > 2000) entries.splice(0, entries.length - 2000);
+    if (maxLength && entries.length > maxLength) entries.splice(0, entries.length - maxLength);
     this.streams.set(streamKey, entries);
     this.#emit(channel, message, id);
     return id;
@@ -351,6 +352,50 @@ class MemoryRedis {
     }
   }
 }
+
+test('presenter command and event streams retain exactly the newest 2,000 entries', async () => {
+  const source = await readFile(new URL('../src/cloud-remote-redis-server.js', import.meta.url), 'utf8');
+  const script = (name) => {
+    const match = source.match(new RegExp(`const ${name} = \\\`([\\s\\S]*?)\\\`;`));
+    assert.ok(match, `${name} template exists`);
+    return match[1];
+  };
+  const phoneCommandScript = script('PHONE_COMMAND_SCRIPT');
+  const publishEventScript = script('PUBLISH_EVENT_SCRIPT');
+  for (const [name, lua] of [['PHONE_COMMAND_SCRIPT', phoneCommandScript], ['PUBLISH_EVENT_SCRIPT', publishEventScript]]) {
+    const xadd = lua.match(/redis\.call\('XADD'[^\n]*/)?.[0];
+    assert.ok(xadd, `${name} contains XADD`);
+    assert.match(xadd, /'MAXLEN', 2000,/);
+    assert.doesNotMatch(xadd, /'MAXLEN',\s*'~'/);
+  }
+
+  const redis = new MemoryRedis();
+  redis.values.set('session', {
+    active: true,
+    phoneCredential: 'phone-credential',
+    phones: { phone: { phoneId: 'phone', credential: 'phone-credential' } },
+    state: { index: 0, total: 10, busy: false },
+  });
+  redis.values.set('phone-lease', 'phone-lease-value');
+  redis.values.set('presenter-lease', 'presenter-lease-value');
+  for (let i = 0; i < 2001; i += 1) {
+    const command = { type: 'command', id: `phone.${i}`, action: 'next' };
+    assert.equal(await redis.eval(phoneCommandScript,
+      ['session', `dedupe-${i}`, 'phone-commands', 'phone-channel', 'phone-lease', 'legacy-lease', 'presenter-lease'],
+      ['phone-credential', 'next', '', '60', JSON.stringify(command), '1', 'phone-lease-value']), 'ok');
+  }
+  const commands = redis.streams.get('phone-commands').map(({ message }) => message);
+  assert.equal(commands.length, 2000);
+  assert.deepEqual(commands, Array.from({ length: 2000 }, (_, i) => ({ type: 'command', id: `phone.${i + 1}`, action: 'next' })));
+
+  for (let i = 0; i < 2001; i += 1) {
+    assert.ok(await redis.eval(publishEventScript, ['events', 'event-channel'],
+      [JSON.stringify({ type: 'event', sequence: i }), '60']));
+  }
+  const events = redis.streams.get('events').map(({ message }) => message);
+  assert.equal(events.length, 2000);
+  assert.deepEqual(events, Array.from({ length: 2000 }, (_, i) => ({ type: 'event', sequence: i + 1 })));
+});
 
 class Peer {
   constructor(socket) {
