@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local-first webcam gesture controller for presentations",
+  "description": "Local-first presentation workspace",
   "scripts": {
     "dev": "node server.mjs",
     "build:vercel": "node scripts/build-vercel.mjs",
@@ -12,13 +12,13 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "0.10.33",
     "@upstash/redis": "^1.39.0",
     "pdfjs-dist": "4.10.38",
     "ws": "^8.22.0"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
+    "@mediapipe/tasks-vision": "0.10.33",
     "eslint": "9.39.5",
     "globals": "17.13.0"
   }

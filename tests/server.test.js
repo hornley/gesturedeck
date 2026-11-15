@@ -71,6 +71,9 @@ test('development server exposes only the required PDF.js runtime assets', async
     await once(server, 'listening');
     const origin = `http://127.0.0.1:${server.address().port}`;
 
+    const mediapipe = await fetch(`${origin}/node_modules/@mediapipe/tasks-vision/vision_bundle.mjs`);
+    assert.equal(mediapipe.status, 404);
+
     for (const route of [
       '/node_modules/pdfjs-dist/build/pdf.mjs',
       '/node_modules/pdfjs-dist/build/pdf.worker.mjs',

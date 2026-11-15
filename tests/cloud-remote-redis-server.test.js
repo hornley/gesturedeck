@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { EventEmitter, once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { attachRedisCloudRemote } from '../src/cloud-remote-redis-server.js';
 
@@ -19,6 +20,8 @@ class MemoryRedis {
     this.setCalls = 0;
     this.presenterAuthResults = [...presenterAuthResults];
     this.presenterAuthStateOverrides = [...presenterAuthStateOverrides];
+    this.presenterReleaseCalls = 0;
+    this.presenterReleaseWaiters = [];
   }
 
   async get(key) {
@@ -39,6 +42,23 @@ class MemoryRedis {
 
   async del(...keys) {
     return keys.reduce((removed, key) => removed + Number(this.values.delete(key)), 0);
+  }
+
+  waitForPresenterRelease() {
+    if (this.presenterReleaseCalls) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      let timer;
+      const waiter = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      timer = setTimeout(() => {
+        const index = this.presenterReleaseWaiters.indexOf(waiter);
+        if (index >= 0) this.presenterReleaseWaiters.splice(index, 1);
+        reject(new Error('Presenter close was not released'));
+      }, 3_000);
+      this.presenterReleaseWaiters.push(waiter);
+    });
   }
 
   subscribe(channel) {
@@ -175,13 +195,16 @@ class MemoryRedis {
       const legacy = !paired && session?.phoneCredential === args[0];
       const leaseKey = legacy ? keys[5] : keys[4];
       if (!session?.active || (!paired && !legacy)) return 'invalid';
-      if (this.values.get(leaseKey) !== args[6]) return 'invalid';
+      if (this.values.get(leaseKey) !== args[5]) return 'invalid';
       if (session.state.target === 'canva' && session.state.ready !== true) return 'not-ready';
       if (args[1] === 'goTo'
         && (session.state.target === 'canva' || Number(args[2]) >= session.state.total)) return 'out-of-range';
+      const presenterConnectionId = this.values.get(keys[6]);
+      if (!presenterConnectionId) return 'presenter-unavailable';
       if (this.commandKeys.has(keys[1])) return 'duplicate';
       this.commandKeys.add(keys[1]);
-      if (args[5] === '1') this.#publish(keys[2], keys[3], JSON.parse(args[4]));
+      const eventId = this.#publish(keys[2], null, JSON.parse(args[4]), 2000);
+      this.#emit(keys[3], JSON.parse(args[4]), eventId, presenterConnectionId);
       return 'ok';
     }
 
@@ -293,17 +316,16 @@ class MemoryRedis {
 
     if (operation === 'PUBLISH_EVENT') {
       const message = JSON.parse(args[0]);
-      return this.#publish(keys[0], keys[1], message);
+      return this.#publish(keys[0], keys[1], message, 2000);
     }
 
     if (operation === 'RELEASE_PRESENTER') {
-      if (this.values.get(keys[1]) !== args[0]) return 0;
       const session = this.values.get(keys[0]);
-      if (!session?.active) return 0;
-      this.values.delete(keys[1]);
-      session.active = false;
-      this.values.set(keys[0], session);
-      return 1;
+      const released = session?.active && this.values.get(keys[1]) === args[0]
+        ? Number(this.values.delete(keys[1])) : 0;
+      this.presenterReleaseCalls += 1;
+      for (const resolve of this.presenterReleaseWaiters.splice(0)) resolve();
+      return released;
     }
 
     if (operation === 'RELEASE_PHONE') {
@@ -315,33 +337,80 @@ class MemoryRedis {
     throw new Error(`Fake Redis received unsupported script operation: ${operation}`);
   }
 
-  #publish(streamKey, channel, message) {
+  #publish(streamKey, channel, message, maxLength) {
     const entries = this.streams.get(streamKey) ?? [];
     const id = `${++this.streamOrdinal}-0`;
     entries.push({ id, message: structuredClone(message) });
+    if (maxLength && entries.length > maxLength) entries.splice(0, entries.length - maxLength);
     this.streams.set(streamKey, entries);
     this.#emit(channel, message, id);
     return id;
   }
 
-  #emit(channel, message, eventId) {
-    const envelope = { eventId, message: structuredClone(message) };
+  #emit(channel, message, eventId, targetConnectionId) {
+    const envelope = { eventId, message: structuredClone(message), ...(targetConnectionId ? { targetConnectionId } : {}) };
     for (const subscriber of this.subscribers.get(channel) ?? []) {
       queueMicrotask(() => subscriber.emit('message', { message: envelope }));
     }
   }
 }
 
+test('presenter command and event streams retain exactly the newest 2,000 entries', async () => {
+  const source = await readFile(new URL('../src/cloud-remote-redis-server.js', import.meta.url), 'utf8');
+  const script = (name) => {
+    const match = source.match(new RegExp(String.raw`\bconst\s+${name}\s*=\s*\x60([\s\S]*?)\x60\s*;`));
+    assert.ok(match, `${name} template exists`);
+    return match[1];
+  };
+  const phoneCommandScript = script('PHONE_COMMAND_SCRIPT');
+  const publishEventScript = script('PUBLISH_EVENT_SCRIPT');
+  for (const [name, lua] of [['PHONE_COMMAND_SCRIPT', phoneCommandScript], ['PUBLISH_EVENT_SCRIPT', publishEventScript]]) {
+    const xadd = lua.match(/redis\s*\.\s*call\s*\(\s*['"]XADD['"][\s\S]*?\)/)?.[0];
+    assert.ok(xadd, `${name} contains XADD`);
+    assert.match(xadd, /['"]MAXLEN['"]\s*,\s*2000\s*,/);
+    assert.doesNotMatch(xadd, /['"]MAXLEN['"]\s*,\s*['"]~['"]/);
+  }
+
+  const redis = new MemoryRedis();
+  redis.values.set('session', {
+    active: true,
+    phoneCredential: 'phone-credential',
+    phones: { phone: { phoneId: 'phone', credential: 'phone-credential' } },
+    state: { index: 0, total: 10, busy: false },
+  });
+  redis.values.set('phone-lease', 'phone-lease-value');
+  redis.values.set('presenter-lease', 'presenter-lease-value');
+  for (let i = 0; i < 2001; i += 1) {
+    const command = { type: 'command', id: `phone.${i}`, action: 'next' };
+    assert.equal(await redis.eval(phoneCommandScript,
+      ['session', `dedupe-${i}`, 'phone-commands', 'phone-channel', 'phone-lease', 'legacy-lease', 'presenter-lease'],
+      ['phone-credential', 'next', '', '60', JSON.stringify(command), 'phone-lease-value']), 'ok');
+  }
+  const commands = redis.streams.get('phone-commands').map(({ message }) => message);
+  assert.equal(commands.length, 2000);
+  assert.deepEqual(commands, Array.from({ length: 2000 }, (_, i) => ({ type: 'command', id: `phone.${i + 1}`, action: 'next' })));
+
+  for (let i = 0; i < 2001; i += 1) {
+    assert.ok(await redis.eval(publishEventScript, ['events', 'event-channel'],
+      [JSON.stringify({ type: 'event', sequence: i }), '60']));
+  }
+  const events = redis.streams.get('events').map(({ message }) => message);
+  assert.equal(events.length, 2000);
+  assert.deepEqual(events, Array.from({ length: 2000 }, (_, i) => ({ type: 'event', sequence: i + 1 })));
+});
+
 class Peer {
   constructor(socket) {
     this.socket = socket;
     this.messages = [];
+    this.received = [];
     this.waiters = [];
     this.closed = undefined;
     socket.on('close', (code, reason) => { this.closed = [code, reason.toString('utf8')]; });
     socket.on('message', (data) => {
       const message = JSON.parse(data.toString('utf8'));
       this.messages.push(message);
+      this.received.push(message);
       for (const waiter of [...this.waiters]) {
         if (waiter.predicate(message)) {
           this.waiters.splice(this.waiters.indexOf(waiter), 1);
@@ -648,6 +717,111 @@ test('hosted Redis relay rejects Canva commands until the target is ready', asyn
   );
   assert.deepEqual(await phone.peer.waitFor('commandAck'), {
     type: 'commandAck', id: 'canva-not-ready', accepted: false,
+  });
+});
+
+test('hosted Redis presenter disconnect preserves the session and paired phone credential', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const phone = await fixture.pairPhone(presenter);
+  const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+
+  const released = fixture.redis.waitForPresenterRelease();
+  await presenter.close();
+  await released;
+
+  assert.equal((await fixture.redis.get(sessionKey)).active, true);
+  const resumed = await fixture.connect('phone');
+  resumed.send({ type: 'resume', credential: phone.paired.credential });
+  assert.deepEqual(await resumed.waitFor('resumed'), {
+    type: 'resumed', phoneId: phone.paired.phoneId, label: phone.paired.label, deviceType: 'phone',
+    state: { index: 0, total: 12, busy: false },
+  });
+  assert.equal(phone.peer.messages.some((message) => message.type === 'sessionEnded'), false);
+});
+
+test('hosted Redis relay rejects phone commands while the presenter is offline', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const phone = await fixture.pairPhone(presenter);
+  const commandStream = `gesturedeck:${fixture.pairing.sessionId}:to-presenter`;
+
+  const released = fixture.redis.waitForPresenterRelease();
+  await fixture.redis.del(`gesturedeck:${fixture.pairing.sessionId}:presenter-lease`);
+  await presenter.close();
+  await released;
+  assert.equal((await fixture.redis.get(`gesturedeck:${fixture.pairing.sessionId}`)).active, true);
+  phone.peer.send({ type: 'command', id: 'offline-next', action: 'next' });
+
+  assert.deepEqual(await phone.peer.waitFor('commandAck'), {
+    type: 'commandAck', id: 'offline-next', accepted: false,
+  });
+  assert.equal((fixture.redis.streams.get(commandStream) ?? []).some(({ message }) =>
+    message.type === 'command' && message.id === `${phone.paired.phoneId}.offline-next`), false);
+});
+
+test('hosted Redis relay stale presenter close preserves a replacement lease and session', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+  const leaseKey = `${sessionKey}:presenter-lease`;
+
+  const released = fixture.redis.waitForPresenterRelease();
+  await fixture.redis.set(leaseKey, 'replacement-connection');
+  await presenter.close();
+  await released;
+
+  assert.equal(await fixture.redis.get(leaseKey), 'replacement-connection');
+  assert.equal((await fixture.redis.get(sessionKey)).active, true);
+});
+
+test('hosted Redis phone commands reach only the presenter connection holding the current lease', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const stale = await fixture.presenter();
+  const phone = await fixture.pairPhone(stale);
+  const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+  const leaseKey = `${sessionKey}:presenter-lease`;
+  await fixture.redis.del(leaseKey);
+  const current = await fixture.connect('presenter');
+  current.send({ type: 'presenter', credential: fixture.pairing.hostCredential });
+  await current.waitFor('presenterReady');
+
+  phone.peer.send({ type: 'command', id: 'current-next', action: 'next' });
+  const command = await current.waitFor('command');
+  assert.deepEqual(command, { type: 'command', id: `${phone.paired.phoneId}.current-next`, action: 'next' });
+  current.send({ type: 'commandAck', id: command.id, accepted: true });
+  await phone.peer.waitFor('commandAck');
+  assert.equal(current.received.filter((message) => message.type === 'command'
+    && message.id === `${phone.paired.phoneId}.current-next`).length, 1);
+  assert.equal(stale.received.some((message) => message.type === 'command'
+    && message.id === `${phone.paired.phoneId}.current-next`), false);
+  assert.deepEqual(phone.peer.received.find((message) => message.type === 'commandAck'), {
+    type: 'commandAck', id: 'current-next', accepted: true,
+  });
+});
+
+test('hosted Redis explicit Stop ends the session and revokes paired phone credentials', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const phone = await fixture.pairPhone(presenter);
+
+  const stopped = await postCloudRoute(fixture.server.address().port, 'stop', {
+    sessionId: fixture.pairing.sessionId,
+    hostCredential: fixture.pairing.hostCredential,
+  });
+
+  assert.equal(stopped.status, 200);
+  assert.equal((await fixture.redis.get(`gesturedeck:${fixture.pairing.sessionId}`)).active, false);
+  assert.deepEqual(await phone.peer.waitFor('sessionEnded'), { type: 'sessionEnded' });
+  const resumed = await fixture.connect('phone');
+  resumed.send({ type: 'resume', credential: phone.paired.credential });
+  assert.deepEqual(await resumed.waitFor('resumeRejected'), {
+    type: 'resumeRejected', reason: 'invalid',
   });
 });
 
