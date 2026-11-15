@@ -115,7 +115,7 @@ test('waits for an asynchronous target result before acknowledging a phone comma
 test('pending command results survive cache pressure and acknowledge once when resolved', async (t) => {
   let resolvePending;
   let calls = 0;
-  const { client, socket } = setup({
+  const { socket } = setup({
     onCommand: () => {
       calls++;
       if (calls === 1) return new Promise((resolve) => { resolvePending = resolve; });
@@ -126,12 +126,12 @@ test('pending command results survive cache pressure and acknowledge once when r
   socket.message({ type: 'presenterReady' });
   socket.message({ type: 'command', id: 'pending', action: 'next' });
 
-  for (let index = 0; index < 2_000; index++) {
+  for (let index = 0; index < 1_999; index++) {
     socket.message({ type: 'command', id: `sync-${index}`, action: 'next' });
   }
   const ackCountBeforeReplay = socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'pending').length;
   socket.message({ type: 'command', id: 'pending', action: 'next' });
-  assert.equal(calls, 2_001);
+  assert.equal(calls, 2_000);
   assert.equal(socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'pending').length, ackCountBeforeReplay);
 
   resolvePending(true);
@@ -140,6 +140,44 @@ test('pending command results survive cache pressure and acknowledge once when r
   assert.deepEqual(socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'pending'), [
     { type: 'commandAck', id: 'pending', accepted: true },
   ]);
+});
+
+test('deduplicates every command in the latest 2,000 IDs while older pending work still acknowledges', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let resolvePending;
+  let calls = 0;
+  const { client, socket: first } = setup({
+    autoReconnect: true,
+    onCommand: () => {
+      calls++;
+      return calls === 1 ? new Promise((resolve) => { resolvePending = resolve; }) : true;
+    },
+  }, t);
+  first.open();
+  first.message({ type: 'presenterReady' });
+  first.message({ type: 'command', id: 'pending-A', action: 'next' });
+  for (let index = 1; index <= 2_000; index++) {
+    first.message({ type: 'command', id: `completed-B${index}`, action: 'next' });
+  }
+  first.close();
+  t.mock.timers.tick(250);
+
+  const replacement = FakeWebSocket.instances[1];
+  replacement.open();
+  replacement.message({ type: 'presenterReady' });
+  replacement.message({ type: 'command', id: 'completed-B1', action: 'next' });
+  assert.equal(calls, 2_001, 'replayed B1 must use its cached result');
+  assert.deepEqual(replacement.sent.at(-1), {
+    type: 'commandAck', id: 'completed-B1', accepted: true,
+  });
+
+  resolvePending(true);
+  await Promise.resolve();
+  assert.equal(calls, 2_001, 'evicted pending A must not be executed again');
+  assert.deepEqual(replacement.sent.at(-1), {
+    type: 'commandAck', id: 'pending-A', accepted: true,
+  });
+  client.close();
 });
 
 test('rejects a new command when all 2,000 cached results are pending', (t) => {
@@ -159,6 +197,33 @@ test('rejects a new command when all 2,000 cached results are pending', (t) => {
   socket.message({ type: 'command', id: 'overflow', action: 'next' });
   assert.equal(calls, 2_000);
   assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'overflow', accepted: false });
+});
+
+test('repeated overflow does not exceed 2,000 unresolved command executions', async (t) => {
+  const pendingResolvers = [];
+  let calls = 0;
+  const { socket } = setup({
+    onCommand: () => {
+      calls++;
+      return new Promise((resolve) => pendingResolvers.push(resolve));
+    },
+  }, t);
+  socket.open();
+  socket.message({ type: 'presenterReady' });
+  for (let index = 0; index < 2_000; index++) {
+    socket.message({ type: 'command', id: `in-flight-${index}`, action: 'next' });
+  }
+  for (let index = 0; index < 10; index++) {
+    socket.message({ type: 'command', id: `overflow-${index}`, action: 'next' });
+  }
+  assert.equal(calls, 2_000);
+  assert.deepEqual(socket.sent.filter(({ type, id }) => type === 'commandAck' && id.startsWith('overflow-')).length, 10);
+  assert.ok(socket.sent.filter(({ type, id }) => type === 'commandAck' && id.startsWith('overflow-')).every(({ accepted }) => !accepted));
+
+  pendingResolvers[0](true);
+  await Promise.resolve();
+  assert.equal(socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'in-flight-0').length, 1);
+  assert.equal(calls, 2_000);
 });
 
 test('callback failure acknowledges false and host events use the connection callback', () => {

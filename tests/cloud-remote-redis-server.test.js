@@ -195,14 +195,16 @@ class MemoryRedis {
       const legacy = !paired && session?.phoneCredential === args[0];
       const leaseKey = legacy ? keys[5] : keys[4];
       if (!session?.active || (!paired && !legacy)) return 'invalid';
-      if (this.values.get(leaseKey) !== args[6]) return 'invalid';
+      if (this.values.get(leaseKey) !== args[5]) return 'invalid';
       if (session.state.target === 'canva' && session.state.ready !== true) return 'not-ready';
       if (args[1] === 'goTo'
         && (session.state.target === 'canva' || Number(args[2]) >= session.state.total)) return 'out-of-range';
-      if (!this.values.has(keys[6])) return 'presenter-unavailable';
+      const presenterConnectionId = this.values.get(keys[6]);
+      if (!presenterConnectionId) return 'presenter-unavailable';
       if (this.commandKeys.has(keys[1])) return 'duplicate';
       this.commandKeys.add(keys[1]);
-      if (args[5] === '1') this.#publish(keys[2], keys[3], JSON.parse(args[4]), 2000);
+      const eventId = this.#publish(keys[2], null, JSON.parse(args[4]), 2000);
+      this.#emit(keys[3], JSON.parse(args[4]), eventId, presenterConnectionId);
       return 'ok';
     }
 
@@ -345,8 +347,8 @@ class MemoryRedis {
     return id;
   }
 
-  #emit(channel, message, eventId) {
-    const envelope = { eventId, message: structuredClone(message) };
+  #emit(channel, message, eventId, targetConnectionId) {
+    const envelope = { eventId, message: structuredClone(message), ...(targetConnectionId ? { targetConnectionId } : {}) };
     for (const subscriber of this.subscribers.get(channel) ?? []) {
       queueMicrotask(() => subscriber.emit('message', { message: envelope }));
     }
@@ -363,10 +365,10 @@ test('presenter command and event streams retain exactly the newest 2,000 entrie
   const phoneCommandScript = script('PHONE_COMMAND_SCRIPT');
   const publishEventScript = script('PUBLISH_EVENT_SCRIPT');
   for (const [name, lua] of [['PHONE_COMMAND_SCRIPT', phoneCommandScript], ['PUBLISH_EVENT_SCRIPT', publishEventScript]]) {
-    const xadd = lua.match(/redis\s*\.\s*call\s*\(\s*['\"]XADD['\"][\s\S]*?\)/)?.[0];
+    const xadd = lua.match(/redis\s*\.\s*call\s*\(\s*['"]XADD['"][\s\S]*?\)/)?.[0];
     assert.ok(xadd, `${name} contains XADD`);
-    assert.match(xadd, /['\"]MAXLEN['\"]\s*,\s*2000\s*,/);
-    assert.doesNotMatch(xadd, /['\"]MAXLEN['\"]\s*,\s*['\"]~['\"]/);
+    assert.match(xadd, /['"]MAXLEN['"]\s*,\s*2000\s*,/);
+    assert.doesNotMatch(xadd, /['"]MAXLEN['"]\s*,\s*['"]~['"]/);
   }
 
   const redis = new MemoryRedis();
@@ -382,7 +384,7 @@ test('presenter command and event streams retain exactly the newest 2,000 entrie
     const command = { type: 'command', id: `phone.${i}`, action: 'next' };
     assert.equal(await redis.eval(phoneCommandScript,
       ['session', `dedupe-${i}`, 'phone-commands', 'phone-channel', 'phone-lease', 'legacy-lease', 'presenter-lease'],
-      ['phone-credential', 'next', '', '60', JSON.stringify(command), '1', 'phone-lease-value']), 'ok');
+      ['phone-credential', 'next', '', '60', JSON.stringify(command), 'phone-lease-value']), 'ok');
   }
   const commands = redis.streams.get('phone-commands').map(({ message }) => message);
   assert.equal(commands.length, 2000);
@@ -401,12 +403,14 @@ class Peer {
   constructor(socket) {
     this.socket = socket;
     this.messages = [];
+    this.received = [];
     this.waiters = [];
     this.closed = undefined;
     socket.on('close', (code, reason) => { this.closed = [code, reason.toString('utf8')]; });
     socket.on('message', (data) => {
       const message = JSON.parse(data.toString('utf8'));
       this.messages.push(message);
+      this.received.push(message);
       for (const waiter of [...this.waiters]) {
         if (waiter.predicate(message)) {
           this.waiters.splice(this.waiters.indexOf(waiter), 1);
@@ -772,6 +776,32 @@ test('hosted Redis relay stale presenter close preserves a replacement lease and
 
   assert.equal(await fixture.redis.get(leaseKey), 'replacement-connection');
   assert.equal((await fixture.redis.get(sessionKey)).active, true);
+});
+
+test('hosted Redis phone commands reach only the presenter connection holding the current lease', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const stale = await fixture.presenter();
+  const phone = await fixture.pairPhone(stale);
+  const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+  const leaseKey = `${sessionKey}:presenter-lease`;
+  await fixture.redis.del(leaseKey);
+  const current = await fixture.connect('presenter');
+  current.send({ type: 'presenter', credential: fixture.pairing.hostCredential });
+  await current.waitFor('presenterReady');
+
+  phone.peer.send({ type: 'command', id: 'current-next', action: 'next' });
+  const command = await current.waitFor('command');
+  assert.deepEqual(command, { type: 'command', id: `${phone.paired.phoneId}.current-next`, action: 'next' });
+  current.send({ type: 'commandAck', id: command.id, accepted: true });
+  await phone.peer.waitFor('commandAck');
+  assert.equal(current.received.filter((message) => message.type === 'command'
+    && message.id === `${phone.paired.phoneId}.current-next`).length, 1);
+  assert.equal(stale.received.some((message) => message.type === 'command'
+    && message.id === `${phone.paired.phoneId}.current-next`), false);
+  assert.deepEqual(phone.peer.received.find((message) => message.type === 'commandAck'), {
+    type: 'commandAck', id: 'current-next', accepted: true,
+  });
 });
 
 test('hosted Redis explicit Stop ends the session and revokes paired phone credentials', async (t) => {

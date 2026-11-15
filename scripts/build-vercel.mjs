@@ -26,32 +26,19 @@ for (const file of [
   'app.js',
   'extension/shared/page-bridge.js',
   'extension/shared/protocol.js',
-  'assets/hand_landmarker.task',
 ]) {
   await copy(file);
 }
 
 for (const file of [
-  'camera-session.js',
-  'camera-preview.js',
-  'hand-overlay.js',
-  'hand-tracking.js',
-  'local-hand-tracker.js',
   'pdf-presentation.js',
   'presentation.js',
   'mobile-remote-client.js',
   'mobile-remote-phone.js',
-  'gesture-engine.js',
 ]) {
   await copy(`src/${file}`);
 }
 
-await copy(
-  'node_modules/@mediapipe/tasks-vision/vision_bundle.mjs',
-);
-await copy(
-  'node_modules/@mediapipe/tasks-vision/wasm',
-);
 await copy('node_modules/pdfjs-dist/build/pdf.mjs');
 await copy('node_modules/pdfjs-dist/build/pdf.worker.mjs');
 await copy('node_modules/pdfjs-dist/cmaps');

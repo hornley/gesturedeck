@@ -97,6 +97,7 @@ export function createMobileRemoteClient({
   let retryIndex = 0;
   let latestState;
   const commandResults = new Map();
+  let pendingCommandCount = 0;
 
   const retryDelays = [250, 500, 1_000, 2_000, 4_000, 5_000];
 
@@ -164,29 +165,27 @@ export function createMobileRemoteClient({
         }
         return;
       }
+      let rejectForPendingCapacity = false;
       if (commandResults.size >= 2_000) {
-        let completedId;
-        for (const [id, entry] of commandResults) {
-          if (entry.state === 'completed') {
-            completedId = id;
-            break;
-          }
-        }
-        if (completedId === undefined) {
-          send({ type: 'commandAck', id: message.id, accepted: false });
-          return;
-        }
-        commandResults.delete(completedId);
+        rejectForPendingCapacity = pendingCommandCount >= 2_000;
+        commandResults.delete(commandResults.keys().next().value);
+      }
+      if (rejectForPendingCapacity) {
+        commandResults.set(message.id, { state: 'completed', accepted: false });
+        send({ type: 'commandAck', id: message.id, accepted: false });
+        return;
       }
       const entry = { state: 'pending', accepted: false };
       commandResults.set(message.id, entry);
+      pendingCommandCount++;
       const command = message.action === 'goTo'
         ? { action: message.action, index: message.index }
         : { action: message.action };
       let result = false;
       try { result = onCommand(command); } catch { /* Reject failed commands. */ }
       const complete = (accepted) => {
-        if (disposed || commandResults.get(message.id) !== entry) return;
+        if (disposed) return;
+        pendingCommandCount--;
         entry.state = 'completed';
         entry.accepted = Boolean(accepted);
         if (authenticated) send({ type: 'commandAck', id: message.id, accepted: entry.accepted });
