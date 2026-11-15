@@ -19,6 +19,8 @@ class MemoryRedis {
     this.setCalls = 0;
     this.presenterAuthResults = [...presenterAuthResults];
     this.presenterAuthStateOverrides = [...presenterAuthStateOverrides];
+    this.presenterReleaseCalls = 0;
+    this.presenterReleaseWaiters = [];
   }
 
   async get(key) {
@@ -39,6 +41,17 @@ class MemoryRedis {
 
   async del(...keys) {
     return keys.reduce((removed, key) => removed + Number(this.values.delete(key)), 0);
+  }
+
+  waitForPresenterRelease() {
+    if (this.presenterReleaseCalls) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Presenter close was not released')), 3_000);
+      this.presenterReleaseWaiters.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   subscribe(channel) {
@@ -297,13 +310,19 @@ class MemoryRedis {
     }
 
     if (operation === 'RELEASE_PRESENTER') {
-      if (this.values.get(keys[1]) !== args[0]) return 0;
-      const session = this.values.get(keys[0]);
-      if (!session?.active) return 0;
-      this.values.delete(keys[1]);
-      session.active = false;
-      this.values.set(keys[0], session);
-      return 1;
+      let released = 0;
+      if (this.values.get(keys[1]) === args[0]) {
+        const session = this.values.get(keys[0]);
+        if (session?.active) {
+          this.values.delete(keys[1]);
+          session.active = false;
+          this.values.set(keys[0], session);
+          released = 1;
+        }
+      }
+      this.presenterReleaseCalls += 1;
+      for (const resolve of this.presenterReleaseWaiters.splice(0)) resolve();
+      return released;
     }
 
     if (operation === 'RELEASE_PHONE') {
@@ -658,7 +677,9 @@ test('hosted Redis presenter disconnect preserves the session and paired phone c
   const phone = await fixture.pairPhone(presenter);
   const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
 
+  const released = fixture.redis.waitForPresenterRelease();
   await presenter.close();
+  await released;
 
   assert.equal((await fixture.redis.get(sessionKey)).active, true);
   const resumed = await fixture.connect('phone');
@@ -677,7 +698,10 @@ test('hosted Redis relay rejects phone commands while the presenter is offline',
   const phone = await fixture.pairPhone(presenter);
   const commandStream = `gesturedeck:${fixture.pairing.sessionId}:to-presenter`;
 
+  const released = fixture.redis.waitForPresenterRelease();
+  await fixture.redis.del(`gesturedeck:${fixture.pairing.sessionId}:presenter-lease`);
   await presenter.close();
+  await released;
   assert.equal((await fixture.redis.get(`gesturedeck:${fixture.pairing.sessionId}`)).active, true);
   phone.peer.send({ type: 'command', id: 'offline-next', action: 'next' });
 
@@ -695,8 +719,10 @@ test('hosted Redis relay stale presenter close preserves a replacement lease and
   const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
   const leaseKey = `${sessionKey}:presenter-lease`;
 
+  const released = fixture.redis.waitForPresenterRelease();
   await fixture.redis.set(leaseKey, 'replacement-connection');
   await presenter.close();
+  await released;
 
   assert.equal(await fixture.redis.get(leaseKey), 'replacement-connection');
   assert.equal((await fixture.redis.get(sessionKey)).active, true);
