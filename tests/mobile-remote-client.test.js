@@ -248,12 +248,16 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
   replacement.message({ type: 'presenterReady' });
   const duplicate = replacement.message({ type: 'command', id: 'pending-command', action: 'next' });
   assert.equal(deferredCommandCalls, 1);
+  const eventsBeforeCompletion = [...deferred.events];
   resolveCommand(true);
   await Promise.all([pending, duplicate]);
   assert.deepEqual(deferred.socket.sent, [{ type: 'presenter', credential: 'host-secret' }]);
   assert.deepEqual(replacement.sent.at(-1), {
     type: 'commandAck', id: 'pending-command', accepted: true,
   });
+  assert.deepEqual(deferred.events, eventsBeforeCompletion);
+  deferred.client.publishState({ index: 2, total: 5, busy: false });
+  assert.deepEqual(replacement.sent.at(-1), { type: 'state', index: 2, total: 5, busy: false });
   client.close();
   deferred.client.close();
 });
