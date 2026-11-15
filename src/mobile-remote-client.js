@@ -64,8 +64,8 @@ function validPhoneList(message) {
 /**
  * Connect a presenter to its local or cloud server. onConnection receives
  * { type: 'authenticated' | 'rejected' | 'closed' | 'phonePaired' |
- *   'phones' | 'inviteExpired' | 'sessionEnded', reason?: string }.
- * A rejection may omit its reason. No reconnect is attempted.
+ *   'phones' | 'inviteExpired' | 'sessionEnded' | 'reconnecting', reason?: string }.
+ * A rejection may omit its reason. Reconnection is opt-in.
  */
 export function createMobileRemoteClient({
   WebSocketImpl = globalThis.WebSocket,
@@ -74,6 +74,7 @@ export function createMobileRemoteClient({
   hostCredential,
   path = PRESENTER_PATH,
   location = globalThis.location,
+  autoReconnect = false,
 }) {
   if (typeof WebSocketImpl !== 'function') throw new TypeError('WebSocket is unavailable');
   if (typeof onCommand !== 'function' || typeof onConnection !== 'function') {
@@ -90,14 +91,21 @@ export function createMobileRemoteClient({
   let authenticated = false;
   let rejected = false;
   let closed = false;
+  let disposed = false;
+  let terminal = false;
+  let retryTimer;
+  let retryIndex = 0;
   let latestState;
+  const commandResults = new Map();
+
+  const retryDelays = [250, 500, 1_000, 2_000, 4_000, 5_000];
 
   function isOpen() { return socket?.readyState === (WebSocketImpl.OPEN ?? 1); }
 
-  function send(message) {
-    if (closed || !isOpen()) return false;
+  function send(message, target = socket) {
+    if (disposed || target !== socket || target?.readyState !== (WebSocketImpl.OPEN ?? 1)) return false;
     try {
-      socket.send(JSON.stringify(message));
+      target.send(JSON.stringify(message));
       return true;
     } catch {
       return false;
@@ -113,13 +121,14 @@ export function createMobileRemoteClient({
     return true;
   }
 
-  function handleMessage(event) {
-    if (closed || rejected || !isOpen() || typeof event?.data !== 'string') return;
+  function handleMessage(target, event) {
+    if (target !== socket || disposed || terminal || rejected || !isOpen() || typeof event?.data !== 'string') return;
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
     if (!isRecord(message)) return;
     if (message.type === 'presenterReady' && Object.keys(message).length === 1 && !authenticated) {
       authenticated = true;
+      retryIndex = 0;
       onConnection({ type: 'authenticated' });
       if (latestState) send({ type: 'state', ...latestState });
       return;
@@ -130,6 +139,8 @@ export function createMobileRemoteClient({
       const rejection = { type: 'rejected' };
       if (typeof message.reason === 'string') rejection.reason = message.reason;
       onConnection(rejection);
+      if (autoReconnect && message.reason === 'already-connected') retry(target);
+      else terminal = true;
       return;
     }
     if (!authenticated) return;
@@ -143,43 +154,90 @@ export function createMobileRemoteClient({
       return;
     }
     if (validCommand(message)) {
+      if (commandResults.has(message.id)) {
+        const cached = commandResults.get(message.id);
+        if (cached !== null) send({ type: 'commandAck', id: message.id, accepted: cached });
+        return;
+      }
+      commandResults.set(message.id, null);
+      if (commandResults.size > 2_000) commandResults.delete(commandResults.keys().next().value);
       const command = message.action === 'goTo'
         ? { action: message.action, index: message.index }
         : { action: message.action };
       let result = false;
       try { result = onCommand(command); } catch { /* Reject failed commands. */ }
-      if (result && typeof result.then === 'function') {
-        Promise.resolve(result).then(
-          (accepted) => send({ type: 'commandAck', id: message.id, accepted: Boolean(accepted) }),
-          () => send({ type: 'commandAck', id: message.id, accepted: false }),
-        );
-      } else send({ type: 'commandAck', id: message.id, accepted: Boolean(result) });
+      const complete = (accepted) => {
+        if (disposed || !commandResults.has(message.id)) return;
+        const value = Boolean(accepted);
+        commandResults.set(message.id, value);
+        send({ type: 'commandAck', id: message.id, accepted: value });
+      };
+      if (result && typeof result.then === 'function') Promise.resolve(result).then(complete, () => complete(false));
+      else complete(result);
       return;
     }
     if (['phonePaired', 'inviteExpired', 'sessionEnded'].includes(message.type)
-      && Object.keys(message).length === 1) onConnection({ type: message.type });
+      && Object.keys(message).length === 1) {
+      if (message.type === 'sessionEnded') {
+        terminal = true;
+        clearTimeout(retryTimer);
+        commandResults.clear();
+        authenticated = false;
+      }
+      onConnection({ type: message.type });
+    }
   }
 
   function connect() {
-    if (socket || closed) return;
+    if (socket || disposed || terminal) return;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    socket = new WebSocketImpl(`${protocol}//${location.host}${path}`);
-    socket.onopen = () => send({ type: 'presenter', credential: hostCredential });
-    socket.onmessage = handleMessage;
-    socket.onclose = () => {
-      if (closed) return;
-      closed = true;
+    const target = new WebSocketImpl(`${protocol}//${location.host}${path}`);
+    socket = target;
+    rejected = false;
+    target.onopen = () => send({ type: 'presenter', credential: hostCredential }, target);
+    target.onmessage = (event) => handleMessage(target, event);
+    target.onclose = () => {
+      if (target !== socket || disposed) return;
+      socket = undefined;
       authenticated = false;
-      onConnection({ type: 'closed' });
+      rejected = false;
+      if (autoReconnect && !terminal) retry();
+      else {
+        closed = true;
+        terminal = true;
+        onConnection({ type: 'closed' });
+      }
     };
   }
 
+  function retry(target) {
+    if (disposed || terminal || retryTimer) return;
+    if (target === socket) {
+      socket = undefined;
+      authenticated = false;
+      rejected = false;
+      try { target.close(); } catch { /* The retry does not depend on closing a stale transport. */ }
+    }
+    onConnection({ type: 'reconnecting' });
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      retryIndex = Math.min(retryIndex + 1, retryDelays.length - 1);
+      connect();
+    }, retryDelays[retryIndex]);
+  }
+
   function close() {
-    if (closed) return;
+    if (disposed) return;
+    disposed = true;
     closed = true;
     authenticated = false;
     latestState = undefined;
-    socket?.close();
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+    commandResults.clear();
+    const target = socket;
+    socket = undefined;
+    target?.close();
     onConnection({ type: 'closed' });
   }
 
