@@ -112,6 +112,55 @@ test('waits for an asynchronous target result before acknowledging a phone comma
   });
 });
 
+test('pending command results survive cache pressure and acknowledge once when resolved', async (t) => {
+  let resolvePending;
+  let calls = 0;
+  const { client, socket } = setup({
+    onCommand: () => {
+      calls++;
+      if (calls === 1) return new Promise((resolve) => { resolvePending = resolve; });
+      return true;
+    },
+  }, t);
+  socket.open();
+  socket.message({ type: 'presenterReady' });
+  socket.message({ type: 'command', id: 'pending', action: 'next' });
+
+  for (let index = 0; index < 2_000; index++) {
+    socket.message({ type: 'command', id: `sync-${index}`, action: 'next' });
+  }
+  const ackCountBeforeReplay = socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'pending').length;
+  socket.message({ type: 'command', id: 'pending', action: 'next' });
+  assert.equal(calls, 2_001);
+  assert.equal(socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'pending').length, ackCountBeforeReplay);
+
+  resolvePending(true);
+  await Promise.resolve();
+  assert.equal(socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'pending').length, 1);
+  assert.deepEqual(socket.sent.filter(({ type, id }) => type === 'commandAck' && id === 'pending'), [
+    { type: 'commandAck', id: 'pending', accepted: true },
+  ]);
+});
+
+test('rejects a new command when all 2,000 cached results are pending', (t) => {
+  let calls = 0;
+  const { socket } = setup({
+    onCommand: () => {
+      calls++;
+      return new Promise(() => {});
+    },
+  }, t);
+  socket.open();
+  socket.message({ type: 'presenterReady' });
+  for (let index = 0; index < 2_000; index++) {
+    socket.message({ type: 'command', id: `pending-${index}`, action: 'next' });
+  }
+
+  socket.message({ type: 'command', id: 'overflow', action: 'next' });
+  assert.equal(calls, 2_000);
+  assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'overflow', accepted: false });
+});
+
 test('callback failure acknowledges false and host events use the connection callback', () => {
   const { socket, events } = setup({ onCommand: () => { throw new Error('bridge failed'); } });
   socket.open();
@@ -176,6 +225,35 @@ test('reconnection is opt-in and waits 250ms after a transport close', (t) => {
   t.mock.timers.tick(1);
   assert.equal(FakeWebSocket.instances.length, 2);
   hosted.client.close();
+});
+
+test('retry delay grows to 5 seconds, then successful authentication resets it', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { client, socket: first } = setup({ autoReconnect: true }, t);
+  const delays = [250, 500, 1_000, 2_000, 4_000, 5_000];
+  let current = first;
+
+  for (const [index, delay] of delays.entries()) {
+    current.close();
+    const count = FakeWebSocket.instances.length;
+    t.mock.timers.tick(delay - 1);
+    assert.equal(FakeWebSocket.instances.length, count, `must wait ${delay}ms`);
+    t.mock.timers.tick(1);
+    assert.equal(FakeWebSocket.instances.length, count + 1, `must reconnect after ${delay}ms`);
+    current = FakeWebSocket.instances.at(-1);
+    if (index === delays.length - 1) {
+      current.open();
+      current.message({ type: 'presenterReady' });
+    }
+  }
+
+  current.close();
+  const count = FakeWebSocket.instances.length;
+  t.mock.timers.tick(249);
+  assert.equal(FakeWebSocket.instances.length, count);
+  t.mock.timers.tick(1);
+  assert.equal(FakeWebSocket.instances.length, count + 1);
+  client.close();
 });
 
 test('reconnect authenticates again and publishes only the latest sanitized state', (t) => {

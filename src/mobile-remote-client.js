@@ -159,21 +159,37 @@ export function createMobileRemoteClient({
     if (validCommand(message)) {
       if (commandResults.has(message.id)) {
         const cached = commandResults.get(message.id);
-        if (cached !== null) send({ type: 'commandAck', id: message.id, accepted: cached });
+        if (cached.state === 'completed') {
+          send({ type: 'commandAck', id: message.id, accepted: cached.accepted });
+        }
         return;
       }
-      commandResults.set(message.id, null);
-      if (commandResults.size > 2_000) commandResults.delete(commandResults.keys().next().value);
+      if (commandResults.size >= 2_000) {
+        let completedId;
+        for (const [id, entry] of commandResults) {
+          if (entry.state === 'completed') {
+            completedId = id;
+            break;
+          }
+        }
+        if (completedId === undefined) {
+          send({ type: 'commandAck', id: message.id, accepted: false });
+          return;
+        }
+        commandResults.delete(completedId);
+      }
+      const entry = { state: 'pending', accepted: false };
+      commandResults.set(message.id, entry);
       const command = message.action === 'goTo'
         ? { action: message.action, index: message.index }
         : { action: message.action };
       let result = false;
       try { result = onCommand(command); } catch { /* Reject failed commands. */ }
       const complete = (accepted) => {
-        if (disposed || !commandResults.has(message.id)) return;
-        const value = Boolean(accepted);
-        commandResults.set(message.id, value);
-        if (authenticated) send({ type: 'commandAck', id: message.id, accepted: value });
+        if (disposed || commandResults.get(message.id) !== entry) return;
+        entry.state = 'completed';
+        entry.accepted = Boolean(accepted);
+        if (authenticated) send({ type: 'commandAck', id: message.id, accepted: entry.accepted });
       };
       if (result && typeof result.then === 'function') Promise.resolve(result).then(complete, () => complete(false));
       else complete(result);
