@@ -230,7 +230,7 @@ test('reconnection is opt-in and waits 250ms after a transport close', (t) => {
 test('retry delay grows to 5 seconds, then successful authentication resets it', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { client, socket: first } = setup({ autoReconnect: true }, t);
-  const delays = [250, 500, 1_000, 2_000, 4_000, 5_000];
+  const delays = [250, 500, 1_000, 2_000, 4_000, 5_000, 5_000];
   let current = first;
 
   for (const [index, delay] of delays.entries()) {
