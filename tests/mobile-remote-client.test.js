@@ -176,7 +176,7 @@ test('reconnection is opt-in and waits 250ms after a transport close', (t) => {
 
 test('reconnect authenticates again and publishes only the latest sanitized state', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { client, socket: first, commands } = setup({ autoReconnect: true });
+  const { client, socket: first, commands, events } = setup({ autoReconnect: true });
   client.publishState({ index: 1, total: 5, busy: false, secret: 'drop' });
   first.open();
   first.message({ type: 'presenterReady' });
@@ -194,6 +194,16 @@ test('reconnect authenticates again and publishes only the latest sanitized stat
     { type: 'presenter', credential: 'host-secret' },
     { type: 'state', index: 3, total: 5, busy: true },
   ]);
+  const currentEvents = [...events];
+  const oldSent = [...first.sent];
+  first.message({ type: 'presenterReady' });
+  first.message({ type: 'presenterRejected', reason: 'invalid-credential' });
+  first.message({ type: 'sessionEnded' });
+  first.close();
+  assert.deepEqual(first.sent, oldSent);
+  assert.deepEqual(events, currentEvents);
+  client.publishState({ index: 4, total: 5, busy: false });
+  assert.deepEqual(second.sent.at(-1), { type: 'state', index: 4, total: 5, busy: false });
   first.message({ type: 'command', id: 'old-socket-command', action: 'next' });
   assert.deepEqual(commands, []);
   client.close();
@@ -220,9 +230,13 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
   assert.deepEqual(second.sent.at(-1), acknowledgement);
 
   let resolveCommand;
+  let deferredCommandCalls = 0;
   const deferred = setup({
     autoReconnect: true,
-    onCommand: () => new Promise((resolve) => { resolveCommand = resolve; }),
+    onCommand: () => {
+      deferredCommandCalls++;
+      return new Promise((resolve) => { resolveCommand = resolve; });
+    },
   });
   deferred.socket.open();
   deferred.socket.message({ type: 'presenterReady' });
@@ -233,13 +247,13 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
   replacement.open();
   replacement.message({ type: 'presenterReady' });
   const duplicate = replacement.message({ type: 'command', id: 'pending-command', action: 'next' });
-  assert.equal(deferred.commands.length, 1);
+  assert.equal(deferredCommandCalls, 1);
   resolveCommand(true);
   await Promise.all([pending, duplicate]);
-  assert.deepEqual(deferred.socket.sent.at(-1), {
+  assert.deepEqual(deferred.socket.sent, [{ type: 'presenter', credential: 'host-secret' }]);
+  assert.deepEqual(replacement.sent.at(-1), {
     type: 'commandAck', id: 'pending-command', accepted: true,
   });
-  assert.deepEqual(replacement.sent.at(-1), deferred.socket.sent.at(-1));
   client.close();
   deferred.client.close();
 });
@@ -256,6 +270,7 @@ test('retryable and terminal auth outcomes are fenced from stale sockets', async
     const attempt = setup({ autoReconnect: true });
     attempt.socket.open();
     attempt.socket.message({ type: 'presenterRejected', reason });
+    attempt.socket.close();
     t.mock.timers.tick(500);
     assert.equal(FakeWebSocket.instances.length, 1, `${reason} should stop retries`);
     attempt.client.close();
