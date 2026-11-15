@@ -198,6 +198,7 @@ class MemoryRedis {
       if (session.state.target === 'canva' && session.state.ready !== true) return 'not-ready';
       if (args[1] === 'goTo'
         && (session.state.target === 'canva' || Number(args[2]) >= session.state.total)) return 'out-of-range';
+      if (!this.values.has(keys[6])) return 'presenter-unavailable';
       if (this.commandKeys.has(keys[1])) return 'duplicate';
       this.commandKeys.add(keys[1]);
       if (args[5] === '1') this.#publish(keys[2], keys[3], JSON.parse(args[4]));
@@ -316,16 +317,9 @@ class MemoryRedis {
     }
 
     if (operation === 'RELEASE_PRESENTER') {
-      let released = 0;
-      if (this.values.get(keys[1]) === args[0]) {
-        const session = this.values.get(keys[0]);
-        if (session?.active) {
-          this.values.delete(keys[1]);
-          session.active = false;
-          this.values.set(keys[0], session);
-          released = 1;
-        }
-      }
+      const session = this.values.get(keys[0]);
+      const released = session?.active && this.values.get(keys[1]) === args[0]
+        ? Number(this.values.delete(keys[1])) : 0;
       this.presenterReleaseCalls += 1;
       for (const resolve of this.presenterReleaseWaiters.splice(0)) resolve();
       return released;
@@ -344,6 +338,7 @@ class MemoryRedis {
     const entries = this.streams.get(streamKey) ?? [];
     const id = `${++this.streamOrdinal}-0`;
     entries.push({ id, message: structuredClone(message) });
+    if (entries.length > 2000) entries.splice(0, entries.length - 2000);
     this.streams.set(streamKey, entries);
     this.#emit(channel, message, id);
     return id;
