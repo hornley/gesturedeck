@@ -356,17 +356,17 @@ class MemoryRedis {
 test('presenter command and event streams retain exactly the newest 2,000 entries', async () => {
   const source = await readFile(new URL('../src/cloud-remote-redis-server.js', import.meta.url), 'utf8');
   const script = (name) => {
-    const match = source.match(new RegExp(`const ${name} = \\\`([\\s\\S]*?)\\\`;`));
+    const match = source.match(new RegExp(String.raw`\bconst\s+${name}\s*=\s*\x60([\s\S]*?)\x60\s*;`));
     assert.ok(match, `${name} template exists`);
     return match[1];
   };
   const phoneCommandScript = script('PHONE_COMMAND_SCRIPT');
   const publishEventScript = script('PUBLISH_EVENT_SCRIPT');
   for (const [name, lua] of [['PHONE_COMMAND_SCRIPT', phoneCommandScript], ['PUBLISH_EVENT_SCRIPT', publishEventScript]]) {
-    const xadd = lua.match(/redis\.call\('XADD'[^\n]*/)?.[0];
+    const xadd = lua.match(/redis\s*\.\s*call\s*\(\s*['\"]XADD['\"][\s\S]*?\)/)?.[0];
     assert.ok(xadd, `${name} contains XADD`);
-    assert.match(xadd, /'MAXLEN', 2000,/);
-    assert.doesNotMatch(xadd, /'MAXLEN',\s*'~'/);
+    assert.match(xadd, /['\"]MAXLEN['\"]\s*,\s*2000\s*,/);
+    assert.doesNotMatch(xadd, /['\"]MAXLEN['\"]\s*,\s*['\"]~['\"]/);
   }
 
   const redis = new MemoryRedis();
