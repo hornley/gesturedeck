@@ -20,7 +20,7 @@ class FakeWebSocket {
   close() { this.readyState = 3; this.onclose?.(); }
 }
 
-function setup(options = {}) {
+function setup(options = {}, t) {
   FakeWebSocket.instances.length = 0;
   const events = [];
   const commands = [];
@@ -32,6 +32,7 @@ function setup(options = {}) {
     location: { protocol: 'http:', host: '127.0.0.1:5173' },
     ...options,
   });
+  t?.after(() => client.close());
   client.connect();
   return { client, socket: FakeWebSocket.instances[0], events, commands };
 }
@@ -162,21 +163,25 @@ test('explicit close prevents late open, ready, command and state sends', () => 
 
 test('reconnection is opt-in and waits 250ms after a transport close', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const local = setup();
+  const local = setup({}, t);
   local.socket.close();
   assert.equal(FakeWebSocket.instances.length, 1);
+  local.client.close();
+  t.mock.timers.tick(250);
+  assert.equal(FakeWebSocket.instances.length, 1);
 
-  const hosted = setup({ autoReconnect: true });
+  const hosted = setup({ autoReconnect: true }, t);
   hosted.socket.close();
   t.mock.timers.tick(249);
   assert.equal(FakeWebSocket.instances.length, 1);
   t.mock.timers.tick(1);
   assert.equal(FakeWebSocket.instances.length, 2);
+  hosted.client.close();
 });
 
 test('reconnect authenticates again and publishes only the latest sanitized state', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { client, socket: first, commands, events } = setup({ autoReconnect: true });
+  const { client, socket: first, commands, events } = setup({ autoReconnect: true }, t);
   client.publishState({ index: 1, total: 5, busy: false, secret: 'drop' });
   first.open();
   first.message({ type: 'presenterReady' });
@@ -186,7 +191,6 @@ test('reconnect authenticates again and publishes only the latest sanitized stat
 
   const second = FakeWebSocket.instances[1];
   assert.ok(second, 'a replacement socket should be created');
-  if (!second) return;
   second.open();
   assert.deepEqual(second.sent, [{ type: 'presenter', credential: 'host-secret' }]);
   second.message({ type: 'presenterReady' });
@@ -211,7 +215,7 @@ test('reconnect authenticates again and publishes only the latest sanitized stat
 
 test('replayed command IDs across reconnect reuse saved acknowledgements', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { client, socket: first, commands } = setup({ autoReconnect: true });
+  const { client, socket: first, commands } = setup({ autoReconnect: true }, t);
   first.open();
   first.message({ type: 'presenterReady' });
   first.message({ type: 'command', id: 'stable-command', action: 'next' });
@@ -222,12 +226,12 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
 
   const second = FakeWebSocket.instances[1];
   assert.ok(second, 'a replacement socket should be created');
-  if (!second) return;
   second.open();
   second.message({ type: 'presenterReady' });
   second.message({ type: 'command', id: 'stable-command', action: 'next' });
   assert.equal(commands.length, 1);
   assert.deepEqual(second.sent.at(-1), acknowledgement);
+  client.close();
 
   let resolveCommand;
   let deferredCommandCalls = 0;
@@ -237,7 +241,7 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
       deferredCommandCalls++;
       return new Promise((resolve) => { resolveCommand = resolve; });
     },
-  });
+  }, t);
   deferred.socket.open();
   deferred.socket.message({ type: 'presenterReady' });
   const pending = deferred.socket.message({ type: 'command', id: 'pending-command', action: 'next' });
@@ -248,13 +252,16 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
   replacement.message({ type: 'presenterReady' });
   const duplicate = replacement.message({ type: 'command', id: 'pending-command', action: 'next' });
   assert.equal(deferredCommandCalls, 1);
+  assert.equal(replacement.sent.some(({ type }) => type === 'commandAck'), false);
   const eventsBeforeCompletion = [...deferred.events];
   resolveCommand(true);
   await Promise.all([pending, duplicate]);
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(deferred.socket.sent, [{ type: 'presenter', credential: 'host-secret' }]);
-  assert.deepEqual(replacement.sent.at(-1), {
+  assert.equal(deferred.socket.sent.some(({ type }) => type === 'commandAck'), false);
+  assert.deepEqual(replacement.sent.filter(({ type }) => type === 'commandAck'), [{
     type: 'commandAck', id: 'pending-command', accepted: true,
-  });
+  }]);
   assert.deepEqual(deferred.events, eventsBeforeCompletion);
   deferred.client.publishState({ index: 2, total: 5, busy: false });
   assert.deepEqual(replacement.sent.at(-1), { type: 'state', index: 2, total: 5, busy: false });
@@ -264,14 +271,15 @@ test('replayed command IDs across reconnect reuse saved acknowledgements', async
 
 test('retryable and terminal auth outcomes are fenced from stale sockets', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const retry = setup({ autoReconnect: true });
+  const retry = setup({ autoReconnect: true }, t);
   retry.socket.open();
   retry.socket.message({ type: 'presenterRejected', reason: 'already-connected' });
   t.mock.timers.tick(250);
   assert.equal(FakeWebSocket.instances.length, 2);
+  retry.client.close();
 
   for (const reason of ['invalid-credential', 'session-missing', 'session-ended', 'invalid-session-state']) {
-    const attempt = setup({ autoReconnect: true });
+    const attempt = setup({ autoReconnect: true }, t);
     attempt.socket.open();
     attempt.socket.message({ type: 'presenterRejected', reason });
     attempt.socket.close();
@@ -280,15 +288,16 @@ test('retryable and terminal auth outcomes are fenced from stale sockets', async
     attempt.client.close();
   }
 
-  const terminal = setup({ autoReconnect: true });
+  const terminal = setup({ autoReconnect: true }, t);
   terminal.socket.open();
   terminal.socket.message({ type: 'presenterReady' });
   terminal.socket.message({ type: 'sessionEnded' });
   terminal.socket.close();
   t.mock.timers.tick(500);
   assert.equal(FakeWebSocket.instances.length, 1);
+  terminal.client.close();
 
-  const explicit = setup({ autoReconnect: true });
+  const explicit = setup({ autoReconnect: true }, t);
   const old = explicit.socket;
   const oldMessage = old.onmessage;
   explicit.client.close();
