@@ -46,11 +46,17 @@ class MemoryRedis {
   waitForPresenterRelease() {
     if (this.presenterReleaseCalls) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Presenter close was not released')), 3_000);
-      this.presenterReleaseWaiters.push(() => {
+      let timer;
+      const waiter = () => {
         clearTimeout(timer);
         resolve();
-      });
+      };
+      timer = setTimeout(() => {
+        const index = this.presenterReleaseWaiters.indexOf(waiter);
+        if (index >= 0) this.presenterReleaseWaiters.splice(index, 1);
+        reject(new Error('Presenter close was not released'));
+      }, 3_000);
+      this.presenterReleaseWaiters.push(waiter);
     });
   }
 
@@ -685,7 +691,7 @@ test('hosted Redis presenter disconnect preserves the session and paired phone c
   const resumed = await fixture.connect('phone');
   resumed.send({ type: 'resume', credential: phone.paired.credential });
   assert.deepEqual(await resumed.waitFor('resumed'), {
-    type: 'resumed', phoneId: phone.paired.phoneId, label: 'Phone', deviceType: 'phone',
+    type: 'resumed', phoneId: phone.paired.phoneId, label: phone.paired.label, deviceType: 'phone',
     state: { index: 0, total: 12, busy: false },
   });
   assert.equal(phone.peer.messages.some((message) => message.type === 'sessionEnded'), false);
