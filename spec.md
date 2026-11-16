@@ -24,9 +24,10 @@ The presentation workspace wastes tablet width, uses deck-choice descriptions th
 - `styles.css`: adjust the tablet `.control-column` grid and deck-choice description color.
 - `workspace.html`: update the workspace hint and setup-group heading.
 - `index.html`: update the home navigation label.
+- `app.js`: keep the cloud-mode replacement hint explicit about the left and right arrow keys.
 - `tests/app.test.js`: assert the tablet rule and the user-visible copy.
 
-No JavaScript behavior, element IDs, remote payloads, camera/PDF boundaries, server allowlists, or extension contracts change.
+Only visible copy changes in `app.js`; no JavaScript behavior, element IDs, remote payloads, camera/PDF boundaries, server allowlists, or extension contracts change.
 
 ### Acceptance criteria
 
