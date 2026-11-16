@@ -243,6 +243,22 @@ test('workspace keeps its sample deck, PDF, phone, and manual slide controls', a
   assert.match(html, /← \/ → to navigate/);
 });
 
+test('home and workspace copy names the current presentation flow', async () => {
+  const [homeHtml, workspaceHtml, appSource, css] = await Promise.all([
+    readFile(new URL('../index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../workspace.html', import.meta.url), 'utf8'),
+    readFile(new URL('../app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../styles.css', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(homeHtml, /<a class="local-link" href="\/workspace\.html">Presentation workspace<\/a>/);
+  assert.doesNotMatch(homeHtml, /Local browser workspace/);
+  assert.match(workspaceHtml, /<p class="welcome-description">Choose a sample deck or PDF, then present with the left and right arrow keys or phone controls\.<\/p>/);
+  assert.match(workspaceHtml, /<p class="control-help">Use the Previous and Next buttons or the left and right arrow keys\.<\/p>/);
+  assert.match(appSource, /setText\(document\.querySelector\('\.welcome-description'\), 'Choose a PDF, pair your phone, and present with the left and right arrow keys\.'\)/);
+  assert.match(css, /\.deck-choice-copy > span\s*\{[\s\S]*?color:\s*#696d64;/);
+});
+
 test('manual buttons and unoccupied arrow keys navigate without requesting camera access', async () => {
   const app = await createPairingHarness();
   try {

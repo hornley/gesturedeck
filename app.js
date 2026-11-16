@@ -1055,7 +1055,7 @@ bindEvents();
 if (cloudExperience) {
   document.documentElement.dataset.experience = 'cloud';
   setText($('page-title'), 'Present with your phone.');
-  setText(document.querySelector('.welcome-description'), 'Choose a PDF, pair your phone, and present.');
+  setText(document.querySelector('.welcome-description'), 'Choose a PDF, pair your phone, and present with the left and right arrow keys.');
   setText(elements.connectPhone?.querySelector('.deck-choice-copy strong'), 'Connect phone');
   setText(elements.connectPhone?.querySelector('.deck-choice-copy span'), 'Pair to this presentation');
   setText($('pairing-dialog-eyebrow'), 'PHONE REMOTE');

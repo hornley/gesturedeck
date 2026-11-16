@@ -1,5 +1,49 @@
 # GestureDeck — Product & MVP Specification
 
+## Active issue specification — UI/UX polish (`t3-f92cc5d5`)
+
+**Date:** 2026-11-16
+
+**Branch:** `t3/fix-tablet-layout-ux`
+**Scope:** Fix the four reported workspace and home-page usability findings with the smallest coordinated change.
+
+### Problem
+
+The presentation workspace wastes tablet width, uses deck-choice descriptions that fall below the WCAG AA contrast target, hides the actual keyboard keys from the user, and contains labels left over from an older gesture-first flow.
+
+### Requirements
+
+1. At viewport widths from 621px through 860px, the workspace controls must occupy one full-width column. The deck and controls remain stacked; the existing mobile breakpoint remains unchanged.
+2. Deck-choice descriptions must use a text color with at least 4.5:1 contrast against their surface. Reuse `#696d64` (measured contrast: 4.93:1 against `#f8f7f2`).
+3. The workspace hint must name the supported keyboard controls as the left and right arrow keys. The existing `ArrowLeft` and `ArrowRight` behavior must not change.
+4. Replace the home navigation label **“Local gesture version”** with **“Presentation workspace”**.
+5. Rename the workspace setup group from **“Choose a deck”** to **“Set up your presentation”**. Keep **Connect phone** in that group because it is part of presentation setup.
+
+### Files and contracts
+
+- `styles.css`: adjust the tablet `.control-column` grid and deck-choice description color.
+- `workspace.html`: update the workspace hint and setup-group heading.
+- `index.html`: update the home navigation label.
+- `app.js`: keep the cloud-mode replacement hint explicit about the left and right arrow keys.
+- `tests/app.test.js`: assert the tablet rule and the user-visible copy.
+
+Only visible copy changes in `app.js`; no JavaScript behavior, element IDs, remote payloads, camera/PDF boundaries, server allowlists, or extension contracts change.
+
+### Acceptance criteria
+
+- At 768px, the controls panel spans the available workspace width with no unused grid column.
+- At 621–860px, the control column has one grid track; at 620px and below, the current single-column mobile rule still applies.
+- Deck-choice descriptions meet the 4.5:1 normal-text contrast target.
+- A user can discover that left/right arrow keys navigate slides from the visible workspace hint.
+- The home and workspace labels match the current sample/PDF/phone presentation flow.
+- Focused app tests, `npm run check`, and `npm run lint` pass.
+
+### Non-goals
+
+- Do not redesign the setup flow or split phone pairing into a new panel.
+- Do not add keyboard shortcuts, gestures, camera controls, or new responsive breakpoints.
+- Do not update the historical MVP proposal below beyond this issue-specific section.
+
 **Tagline:** Move the deck. Keep the camera private.
 **Status:** Hackathon MVP proposal
 **Product:** Local-first desktop presentation controller
