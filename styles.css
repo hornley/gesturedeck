@@ -140,14 +140,6 @@ summary:focus-visible {
   color: var(--accent);
 }
 
-.format-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--moss);
-}
-
 .main-content {
   padding-top: clamp(8.5px, 1.375vw, 17.5px);
 }
@@ -272,32 +264,6 @@ h1 {
   background: #f3f5ef;
 }
 
-.deck-choice-mark {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid #e4e5dc;
-  border-radius: 9px;
-  color: #5f6e54;
-  background: #fffefa;
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.04em;
-}
-
-.deck-choice-mark svg,
-.deck-choice-arrow {
-  width: 18px;
-  height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
-}
-
 .deck-choice-copy {
   display: grid;
   min-width: 0;
@@ -326,13 +292,6 @@ h1 {
   white-space: nowrap;
 }
 
-.deck-choice-arrow {
-  width: 16px;
-  height: 16px;
-  margin-left: auto;
-  color: #777b72;
-}
-
 .pdf-status,
 .pdf-error {
   margin: -10px 0 14px;
@@ -341,18 +300,6 @@ h1 {
 
 .pdf-status { color: var(--muted); }
 .pdf-error { color: #a13d34; }
-
-.panel-heading .eyebrow {
-  margin-bottom: 5px;
-}
-
-.panel-heading h2 {
-  margin-bottom: 0;
-  font-size: 19px;
-  font-weight: 660;
-  letter-spacing: -0.04em;
-  line-height: 1.25;
-}
 
 .deck-format {
   display: inline-flex;
@@ -1116,12 +1063,21 @@ html[data-experience="cloud"] .pairing-interface-row {
   padding: 25px;
 }
 
-.session-heading-row {
-  align-items: flex-start;
+.control-help {
+  color: #62675e;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-.session-heading-row h2 {
-  font-size: 21px;
+.keyboard-hint {
+  color: #74786f;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.target-status {
+  color: #6e726a;
+  font-size: 12px;
 }
 
 .action-toast {
@@ -1139,6 +1095,10 @@ html[data-experience="cloud"] .pairing-interface-row {
   .workspace-grid {
     grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.9fr);
     gap: 16px;
+  }
+
+  .keyboard-hint {
+    display: none;
   }
 
   .session-panel {
@@ -1161,17 +1121,12 @@ html[data-experience="cloud"] .pairing-interface-row {
     gap: 20px;
   }
 
-  .privacy-notice {
-    width: min(100%, 440px);
-  }
-
   .workspace-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .control-column {
     grid-template-columns: minmax(0, 1fr);
-    align-items: start;
   }
 
   .slide-canvas {
@@ -1209,10 +1164,6 @@ html[data-experience="cloud"] .pairing-interface-row {
   .welcome-description {
     max-width: 440px;
     font-size: 14px;
-  }
-
-  .privacy-notice {
-    min-height: 66px;
   }
 
   .workspace-grid {
@@ -1337,6 +1288,7 @@ html[data-experience="cloud"] .pairing-interface-row {
 }
 
 @media (max-width: 400px) {
+
   .app-shell {
     padding-inline: 14px;
   }

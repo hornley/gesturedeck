@@ -22,6 +22,7 @@
 
 - Keep browser code in the existing vanilla JavaScript modules and server code in the existing Node.js layers. Update the focused `node:test` file under `tests/` when behavior changes.
 - For JavaScript changes, run the focused test, then `npm run check` and `npm run lint`; run `npm test` for changes that cross modules or protocols. CI runs all three checks on Node.js 20.
+- Treat `extension/manifest.json`'s `version` as the extension release version. Bump its patch once per user-facing PR that changes extension code or packaged extension assets (for example, `0.1.0` to `0.1.1`); do not bump per commit or for application-only, test-only, or documentation-only changes. Keep it independent of `package.json` and `package-lock.json`.
 - Popup tests build their fixture from `extension/popup/popup.html`; update the tests when the markup changes. Redis tests use a fake Redis model and do not execute the production Lua scripts.
 - Test doubles cover local contracts. They do not establish real camera/browser behavior, physical-phone pairing, signed-in Canva behavior, or a deployed Redis/Vercel path; report those boundaries accurately.
 - Keep README setup, supported targets, network requirements, and privacy statements aligned with user-visible behavior.

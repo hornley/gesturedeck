@@ -156,11 +156,13 @@ test('expired invite rejection shows specific recovery guidance', () => {
   assert.equal(result.document.getElementById('previous-button').disabled, true);
 });
 
-test('pair rejection renders reason-specific recovery for invalid, full, and unavailable hosts', () => {
+test('pair rejection uses reason-specific recovery copy', () => {
   for (const [reason, expected] of [
     ['invalid', /invalid/i],
     ['session-full', /eight phones/i],
     ['host-unavailable', /presenter|ready/i],
+    ['session-missing', /session is no longer available/i],
+    ['session-ended', /presenter ended this session/i],
   ]) {
     const result = setup();
     result.document.getElementById('connect-button').dispatch('click');
@@ -496,14 +498,22 @@ test('secure UUID IDs remain available on local HTTP when randomUUID is restrict
   assert.equal(result.socket.sent.at(-1).id, '00010203-0405-4607-8809-0a0b0c0d0e0f');
 });
 
-test('command acknowledgements update action status', () => {
+test('Canva phone acknowledgement reports that navigation was sent', () => {
+  const result = setup();
+  paired(result, { target: 'canva', ready: true, index: null, total: null, busy: false });
+  result.document.getElementById('next-button').dispatch('click');
+  const command = result.socket.sent.at(-1);
+  result.socket.message({ type: 'commandAck', id: command.id, accepted: true });
+  assert.equal(result.document.getElementById('action-status').textContent, 'Navigation sent to Canva.');
+});
+
+test('local deck phone keeps the generic presenter acknowledgement', () => {
   const result = setup();
   paired(result);
   result.document.getElementById('next-button').dispatch('click');
   const command = result.socket.sent.at(-1);
-  assert.equal(command.action, 'next');
   result.socket.message({ type: 'commandAck', id: command.id, accepted: true });
-  assert.match(result.document.getElementById('action-status').textContent, /accepted|sent|updated/i);
+  assert.equal(result.document.getElementById('action-status').textContent, 'Command accepted by presenter.');
 });
 
 test('explicit Disconnect sends disconnect, clears credential, and prevents reconnect', () => {

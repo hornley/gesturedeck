@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f5f3ed">
-    <meta name="description" content="Present the sample deck or a PDF, controlled by your keyboard or phone.">
+    <meta name="description" content="Present a sample deck or PDF with keyboard controls, a phone remote, or Canva navigation.">
     <title>GestureDeck — Presentation workspace</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="styles.css">
@@ -32,8 +32,9 @@
           <div class="welcome-copy">
             <p class="eyebrow">PRESENTATION WORKSPACE</p>
             <h1 id="page-title">Your next presentation.</h1>
-            <p class="welcome-description">Choose a deck, then present with the left and right arrow keys or your phone.</p>
+            <p class="welcome-description">Choose a sample deck or PDF, then present with the left and right arrow keys or phone controls.</p>
           </div>
+
         </section>
 
         <div class="workspace-grid">
@@ -100,6 +101,7 @@
                 <span id="progress-fill" class="progress-fill"></span>
               </div>
               <div class="slide-actions" aria-label="Manual slide controls">
+                <span class="keyboard-hint">← / → to navigate</span>
                 <button id="previous-slide" class="button button-secondary slide-button" type="button" aria-label="Previous slide">
                   <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>
                   <span>Previous</span>
@@ -113,38 +115,20 @@
           </section>
 
           <aside class="control-column" aria-label="Presentation controls">
-            <section class="session-panel" aria-labelledby="session-heading">
-              <div class="panel-heading session-heading-row">
-                <div>
-                  <p class="eyebrow">PRESENTATION</p>
-                  <h2 id="session-heading">Set up your presentation</h2>
-                </div>
-              </div>
-
+            <section class="session-panel" aria-labelledby="controls-heading">
+              <div class="panel-heading"><div><p class="eyebrow">PRESENT</p><h2 id="controls-heading">Move through your deck</h2></div></div>
+              <p class="control-help">Use the Previous and Next buttons or the left and right arrow keys.</p>
               <div class="deck-choices" role="group" aria-label="Choose a presentation">
-                <button id="sample-deck" class="deck-choice-button" type="button" aria-pressed="true">
-                  <span class="deck-choice-mark" aria-hidden="true">01</span>
-                  <span class="deck-choice-copy"><strong>Sample deck</strong><span>Built-in presentation</span></span>
-                  <span id="sample-deck-status" class="deck-choice-state" aria-hidden="true">Selected</span>
-                </button>
-                <button id="open-pdf" class="deck-choice-button" type="button">
-                  <span class="deck-choice-mark deck-choice-file" aria-hidden="true">↑</span>
-                  <span class="deck-choice-copy"><strong>Open a PDF</strong><span>Choose from this device</span></span>
-                  <svg class="deck-choice-arrow" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11M10 5l5 5-5 5" /></svg>
-                </button>
-                <button id="connect-phone" class="deck-choice-button" type="button">
-                  <span class="deck-choice-mark deck-choice-phone" aria-hidden="true"><svg viewBox="0 0 20 20" focusable="false"><rect x="6" y="2.5" width="8" height="15" rx="1.5"/><path d="M9 14.5h2"/></svg></span>
-                  <span class="deck-choice-copy"><strong>Connect phone</strong><span>Use as a slide remote</span></span>
-                  <svg class="deck-choice-arrow" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11M10 5l5 5-5 5" /></svg>
-                </button>
+                <button id="sample-deck" class="deck-choice-button" type="button" aria-pressed="true"><span class="deck-choice-copy"><strong>Sample deck</strong><span>Built-in presentation</span></span><span id="sample-deck-status" class="deck-choice-state" aria-hidden="true">Selected</span></button>
+                <button id="open-pdf" class="deck-choice-button" type="button"><span class="deck-choice-copy"><strong>Open a PDF</strong><span>Choose from this device</span></span></button>
+                <button id="connect-phone" class="deck-choice-button" type="button"><span class="deck-choice-copy"><strong>Connect phone</strong><span>Use as a slide remote</span></span></button>
                 <input id="pdf-file" type="file" accept=".pdf,application/pdf" hidden aria-label="Choose a PDF presentation">
               </div>
-
-              <p id="action-toast" class="action-toast" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+              <p id="target-status" class="target-status">Sample deck · browser demo</p>
             </section>
-
           </aside>
         </div>
+        <p id="action-toast" class="action-toast" role="status" aria-live="polite" aria-atomic="true" hidden></p>
 
       </main>
     </div>

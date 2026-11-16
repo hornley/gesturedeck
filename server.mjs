@@ -16,7 +16,6 @@ const publicRootFiles = new Set([
 const publicDirectories = [
   'src/',
   'assets/',
-  'node_modules/@mediapipe/tasks-vision/',
   'node_modules/pdfjs-dist/build/',
   'node_modules/pdfjs-dist/cmaps/',
   'node_modules/pdfjs-dist/standard_fonts/',
