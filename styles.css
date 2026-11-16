@@ -312,7 +312,7 @@ h1 {
 
 .deck-choice-copy > span {
   overflow: hidden;
-  color: #777b72;
+  color: #696d64;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1170,7 +1170,7 @@ html[data-experience="cloud"] .pairing-interface-row {
   }
 
   .control-column {
-    grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
   }
 
