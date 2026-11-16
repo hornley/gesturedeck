@@ -75,6 +75,23 @@ test('workspace stacks presentation and controls at tablet widths', async () => 
   const css = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
   const tabletStyles = css.slice(css.indexOf('@media (max-width: 860px)'), css.indexOf('@media (max-width: 620px)'));
   assert.match(tabletStyles, /\.workspace-grid\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(tabletStyles, /\.control-column\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
+});
+
+test('workspace copy names the current presentation flow', async () => {
+  const [homeHtml, workspaceHtml, appSource, css] = await Promise.all([
+    readFile(new URL('../index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../workspace.html', import.meta.url), 'utf8'),
+    readFile(new URL('../app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../styles.css', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(homeHtml, /<a class="local-link" href="\/workspace\.html">Presentation workspace<\/a>/);
+  assert.doesNotMatch(homeHtml, /Local gesture version/);
+  assert.match(workspaceHtml, /<p class="welcome-description">Choose a deck, then present with the left and right arrow keys or your phone\.<\/p>/);
+  assert.match(workspaceHtml, /<h2 id="session-heading">Set up your presentation<\/h2>/);
+  assert.match(appSource, /setText\(document\.querySelector\('\.welcome-description'\), 'Choose a PDF, pair your phone, and present with the left and right arrow keys\.'\)/);
+  assert.match(css, /\.deck-choice-copy > span\s*\{[\s\S]*?color:\s*#696d64;/);
 });
 
 test('workspace renders deck and phone controls without requesting camera access', async () => {
