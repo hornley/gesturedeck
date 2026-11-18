@@ -1,6 +1,6 @@
 # GestureDeck Minimalist UI/UX Design
 
-- **Design status:** Approved design brief; written spec pending user review
+- **Design status:** Approved by user
 - **Baseline:** `hornley/main` at `0d3ca14`
 - **Product context:** [`PRODUCT.md`](../../../PRODUCT.md)
 
