@@ -11,6 +11,7 @@ const INVITE_TTL_MS = 300_000;
 const LEASE_TTL_SECONDS = 20;
 const POLL_INTERVAL_MS = 5_000;
 const MAX_BODY_BYTES = 16 * 1024;
+const MAX_SESSIONS = 64;
 const MAX_PHONE_RECORDS = 8;
 const MAX_SESSION_ID_ATTEMPTS = 3;
 const MAX_NICKNAME_LENGTH = 32;
@@ -310,8 +311,26 @@ end
 if session.phoneCredential and session.phoneCredential ~= cjson.null then redis.call('DEL', KEYS[2]) end
 session.phoneCredential = nil
 session.phoneId = nil
+-- shortcut: inactive session records keep their existing four-hour TTL; bound churn separately if storage needs a hard limit.
+redis.call('ZREM', KEYS[3], ARGV[3])
 redis.call('SET', KEYS[1], cjson.encode(session), 'EX', ARGV[2])
 return 1
+`;
+
+const CREATE_SESSION_SCRIPT = `
+-- REDIS_OP:CREATE_SESSION
+-- shortcut: sessions that predate this index are not counted; backfill them if rollout needs an immediate hard cap.
+local redisTime = redis.call('TIME')
+local now = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
+local expiresAt = now + tonumber(ARGV[2]) * 1000
+local session = cjson.decode(ARGV[1])
+session.expiresAt = expiresAt
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[3]) then return 'capacity-reached' end
+local stored = redis.call('SET', KEYS[1], cjson.encode(session), 'NX', 'PXAT', string.format('%.0f', expiresAt))
+if not stored then return 'collision' end
+redis.call('ZADD', KEYS[2], expiresAt, ARGV[4])
+return tostring(expiresAt)
 `;
 
 const UPDATE_STATE_SCRIPT = `
@@ -389,6 +408,7 @@ return id
 
 const RELEASE_PRESENTER_SCRIPT = `
 -- REDIS_OP:RELEASE_PRESENTER
+-- Keep the capacity entry while this recoverable session waits for its presenter to reconnect.
 if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 0 end
@@ -686,6 +706,8 @@ function attachCloudWebSocketServer(server, { path, verifyRequest, onConnection 
 export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketFunctionPath } = {}) {
   const sockets = new Set();
   const localSessions = new Map();
+  const environment = process.env.VERCEL_ENV || 'development';
+  const capacityKey = key(`active-sessions:${environment}`);
 
   function localPeers(id) {
     let peers = localSessions.get(id);
@@ -1176,8 +1198,8 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
 
   async function endSession(client, id, sessionKey) {
     const ended = await client.eval(END_SESSION_SCRIPT,
-      [sessionKey, key(id, 'phone-lease')],
-      [key(id, 'phone-lease:'), String(SESSION_TTL_SECONDS)]);
+      [sessionKey, key(id, 'phone-lease'), capacityKey],
+      [key(id, 'phone-lease:'), String(SESSION_TTL_SECONDS), id]);
     if (!Number(ended)) return false;
     await Promise.all([
       deliver(id, 'presenter', key(id, 'to-presenter'), { type: 'sessionEnded' }),
@@ -1216,28 +1238,40 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         if (origin.protocol !== 'https:') { sendJson(response, 426, { error: 'https-required' }); return; }
         const hostCredential = token();
         const invite = token();
-        const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
         const session = { active: true, origin: origin.origin, hostCredential, invite,
           inviteExpiresAt: Date.now() + INVITE_TTL_MS, pairAttempts: 0,
-          phones: {}, nextPhoneOrdinal: 1, state, expiresAt };
+          phones: {}, nextPhoneOrdinal: 1, state };
         let id = '';
         let stored = false;
+        let expiresAt = 0;
+        let fallbackUrl = '';
+        let qrDataUrl = '';
         for (let attempt = 0; attempt < MAX_SESSION_ID_ATTEMPTS; attempt += 1) {
           id = token(12);
-          const result = await redis.set(key(id), session, { ex: SESSION_TTL_SECONDS, nx: true });
-          if (result === 'OK') {
-            stored = true;
-            break;
+          const pairingUrl = new URL(`/r/${id}`, origin.origin);
+          pairingUrl.hash = invite;
+          const candidateQrDataUrl = createQrDataUrl(pairingUrl.href);
+          const result = await redis.eval(CREATE_SESSION_SCRIPT, [key(id), capacityKey], [
+            JSON.stringify(session), String(SESSION_TTL_SECONDS), String(MAX_SESSIONS), id,
+          ]);
+          if (result === 'capacity-reached') {
+            sendJson(response, 503, { error: 'capacity-reached' });
+            return;
           }
+          if (result === 'collision') continue;
+          expiresAt = Number(result);
+          if (!Number.isSafeInteger(expiresAt)) throw new Error('Hosted session creation failed');
+          fallbackUrl = pairingUrl.href;
+          qrDataUrl = candidateQrDataUrl;
+          stored = true;
+          break;
         }
         if (!stored) {
           sendJson(response, 503, { error: 'relay-storage-unavailable' });
           return;
         }
-        const pairingUrl = new URL(`/r/${id}`, origin.origin);
-        pairingUrl.hash = invite;
         sendJson(response, 200, { sessionId: id, hostCredential, expiresAt,
-          fallbackUrl: pairingUrl.href, qrDataUrl: createQrDataUrl(pairingUrl.href) });
+          fallbackUrl, qrDataUrl });
         return;
       }
 

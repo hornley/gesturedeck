@@ -10,14 +10,15 @@ const ORIGIN = 'https://gesturedeck.test';
 const HOST = 'gesturedeck.test';
 
 class MemoryRedis {
-  constructor({ setResults = [], presenterAuthResults = [], presenterAuthStateOverrides = [] } = {}) {
+  constructor({ createResults = [], presenterAuthResults = [], presenterAuthStateOverrides = [] } = {}) {
     this.values = new Map();
+    this.sortedSets = new Map();
     this.streams = new Map();
     this.subscribers = new Map();
     this.streamOrdinal = 0;
     this.commandKeys = new Set();
-    this.setResults = [...setResults];
-    this.setCalls = 0;
+    this.createResults = [...createResults];
+    this.createCalls = 0;
     this.presenterAuthResults = [...presenterAuthResults];
     this.presenterAuthStateOverrides = [...presenterAuthStateOverrides];
     this.presenterReleaseCalls = 0;
@@ -30,11 +31,6 @@ class MemoryRedis {
   }
 
   async set(key, value, options = {}) {
-    this.setCalls += 1;
-    if (this.setResults.length) {
-      const result = this.setResults.shift();
-      if (result !== 'OK') return result;
-    }
     if (options.nx && this.values.has(key)) return null;
     this.values.set(key, structuredClone(value));
     return 'OK';
@@ -82,6 +78,25 @@ class MemoryRedis {
 
   async eval(script, keys, args) {
     const operation = script.match(/REDIS_OP:([A-Z_]+)/)?.[1];
+    if (operation === 'CREATE_SESSION') {
+      this.createCalls += 1;
+      const now = Date.now();
+      const members = this.sortedSets.get(keys[1]) ?? new Map();
+      for (const [member, score] of members) {
+        if (score <= now) members.delete(member);
+      }
+      this.sortedSets.set(keys[1], members);
+      if (members.size >= Number(args[2])) return 'capacity-reached';
+      if (this.createResults.length && this.createResults.shift() !== 'created') return 'collision';
+      const session = JSON.parse(args[0]);
+      const expiresAt = now + Number(args[1]) * 1000;
+      session.expiresAt = expiresAt;
+      if (this.values.has(keys[0])) return 'collision';
+      this.values.set(keys[0], session);
+      members.set(args[3], expiresAt);
+      return String(expiresAt);
+    }
+
     if (operation === 'PRESENTER_AUTH') {
       if (this.presenterAuthResults.length) return this.presenterAuthResults.shift();
       const session = this.values.get(keys[0]);
@@ -257,6 +272,7 @@ class MemoryRedis {
     if (operation === 'END_SESSION') {
       const session = this.values.get(keys[0]);
       if (!session?.active) return 0;
+      this.sortedSets.get(keys[2])?.delete(args[2]);
       session.active = false;
       session.invite = '';
       session.inviteExpiresAt = 0;
@@ -482,15 +498,26 @@ async function createFixture({
   redis = new MemoryRedis(),
   state = { index: 0, total: 12, busy: false },
   expectedStartStatus = 200,
+  environment = process.env.VERCEL_ENV || 'development',
 } = {}) {
   const server = createServer();
-  const relay = attachRedisCloudRemote(server, { redis, webSocketFunctionPath: '/api/cloud-remote-ws' });
+  const priorEnvironment = process.env.VERCEL_ENV;
+  let relay;
+  try {
+    process.env.VERCEL_ENV = environment;
+    relay = attachRedisCloudRemote(server, { redis, webSocketFunctionPath: '/api/cloud-remote-ws' });
+  } finally {
+    if (priorEnvironment === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = priorEnvironment;
+  }
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const peers = new Set();
 
-  const pairingResponse = await postCloudRoute(server.address().port, 'start', {
-    state,
-  });
+  async function startSession(sessionState = { index: 0, total: 12, busy: false }) {
+    return postCloudRoute(server.address().port, 'start', { state: sessionState });
+  }
+
+  const pairingResponse = await startSession(state);
   assert.equal(pairingResponse.status, expectedStartStatus);
   const pairing = pairingResponse.status === 200 ? pairingResponse.body : null;
 
@@ -518,7 +545,7 @@ async function createFixture({
   }
 
   return {
-    redis, server, relay, pairing, pairingResponse, peers, connect, presenter, pairPhone,
+    redis, server, relay, pairing, pairingResponse, peers, connect, presenter, pairPhone, startSession,
     async close() {
       await Promise.all([...peers].map((peer) => peer.close()));
       await relay.close();
@@ -652,21 +679,21 @@ test('hosted Redis relay keeps presenter authentication outcomes distinct and sa
 });
 
 test('hosted Redis relay retries a colliding session ID before returning credentials', async (t) => {
-  const redis = new MemoryRedis({ setResults: [null, 'OK'] });
+  const redis = new MemoryRedis({ createResults: ['collision', 'created'] });
   const fixture = await createFixture({ redis });
   t.after(() => fixture.close());
 
-  assert.equal(redis.setCalls, 2);
+  assert.equal(redis.createCalls, 2);
   assert.ok(redis.values.has(`gesturedeck:${fixture.pairing.sessionId}`));
   assert.equal(typeof fixture.pairing.hostCredential, 'string');
 });
 
 test('hosted Redis relay with no successful SET NX result returns no session credentials', async (t) => {
-  const redis = new MemoryRedis({ setResults: [null, null, null] });
+  const redis = new MemoryRedis({ createResults: ['collision', 'collision', 'collision'] });
   const fixture = await createFixture({ redis, expectedStartStatus: 503 });
   t.after(() => fixture.close());
 
-  assert.equal(redis.setCalls, 3);
+  assert.equal(redis.createCalls, 3);
   assert.deepEqual(fixture.pairingResponse.body, { error: 'relay-storage-unavailable' });
   assert.equal(fixture.pairing, null);
   assert.equal(redis.values.size, 0);
@@ -726,12 +753,19 @@ test('hosted Redis presenter disconnect preserves the session and paired phone c
   const presenter = await fixture.presenter();
   const phone = await fixture.pairPhone(presenter);
   const sessionKey = `gesturedeck:${fixture.pairing.sessionId}`;
+  const [capacityKey] = fixture.redis.sortedSets.keys();
+  for (let index = 1; index < 64; index += 1) {
+    assert.equal((await fixture.startSession()).status, 200);
+  }
+  assert.equal((await fixture.startSession()).status, 503);
 
   const released = fixture.redis.waitForPresenterRelease();
   await presenter.close();
   await released;
 
   assert.equal((await fixture.redis.get(sessionKey)).active, true);
+  assert.equal(fixture.redis.sortedSets.get(capacityKey).has(fixture.pairing.sessionId), true);
+  assert.equal((await fixture.startSession()).status, 503);
   const resumed = await fixture.connect('phone');
   resumed.send({ type: 'resume', credential: phone.paired.credential });
   assert.deepEqual(await resumed.waitFor('resumed'), {
@@ -1036,4 +1070,75 @@ test('hosted Redis relay accepts eight phones on the same invite and rejects a n
   overflow.send({ type: 'pair', invite: fixture.pairing.fallbackUrl.split('#')[1], nickname: '', deviceType: 'phone' });
   assert.deepEqual(await overflow.waitFor('pairRejected'), { type: 'pairRejected', reason: 'session-full' });
   assert.equal(phones.length, 8);
+});
+
+test('hosted Redis relay admits 64 sessions and rejects the 65th', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+
+  for (let index = 1; index < 64; index += 1) {
+    assert.equal((await fixture.startSession()).status, 200);
+  }
+  const rejected = await fixture.startSession();
+  assert.equal(rejected.status, 503);
+  assert.deepEqual(rejected.body, { error: 'capacity-reached' });
+  assert.equal([...fixture.redis.sortedSets.values()][0].size, 64);
+});
+
+test('hosted Redis relay admits only one of two concurrent starts for the final slot', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+
+  for (let index = 1; index < 63; index += 1) {
+    assert.equal((await fixture.startSession()).status, 200);
+  }
+  const results = await Promise.all([fixture.startSession(), fixture.startSession()]);
+  assert.deepEqual(results.map(({ status }) => status).sort(), [200, 503]);
+  assert.equal(results.find(({ status }) => status === 503).body.error, 'capacity-reached');
+  assert.equal([...fixture.redis.sortedSets.values()][0].size, 64);
+});
+
+test('hosted Redis relay prunes expired capacity entries before admission', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const [capacityKey] = fixture.redis.sortedSets.keys();
+  fixture.redis.sortedSets.get(capacityKey).set('expired-session', Date.now() - 1);
+
+  assert.equal((await fixture.startSession()).status, 200);
+  assert.equal(fixture.redis.sortedSets.get(capacityKey).has('expired-session'), false);
+});
+
+test('hosted Redis relay frees a capacity slot when a session stops', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+
+  for (let index = 1; index < 64; index += 1) {
+    assert.equal((await fixture.startSession()).status, 200);
+  }
+  assert.equal((await fixture.startSession()).status, 503);
+
+  const stopped = await postCloudRoute(fixture.server.address().port, 'stop', {
+    sessionId: fixture.pairing.sessionId,
+    hostCredential: fixture.pairing.hostCredential,
+  });
+  assert.equal(stopped.status, 200);
+  assert.equal((await fixture.startSession()).status, 200);
+});
+
+test('hosted Redis capacity index keeps preview and production sessions separate', async (t) => {
+  const redis = new MemoryRedis();
+  const production = await createFixture({ redis, environment: 'production' });
+  t.after(() => production.close());
+  const [productionIndexKey] = redis.sortedSets.keys();
+  const productionMembers = redis.sortedSets.get(productionIndexKey);
+  for (let index = productionMembers.size; index < 64; index += 1) {
+    productionMembers.set(`occupied-${index}`, Date.now() + 60_000);
+  }
+
+  const preview = await createFixture({ redis, environment: 'preview' });
+  t.after(() => preview.close());
+  const previewIndexKey = [...redis.sortedSets.keys()].find((indexKey) => indexKey !== productionIndexKey);
+  assert.ok(previewIndexKey);
+  assert.equal(redis.sortedSets.get(previewIndexKey).size, 1);
+  assert.equal(productionMembers.size, 64);
 });
