@@ -1,6 +1,7 @@
 # GestureDeck Minimalist UI/UX Design
 
 - **Design status:** Approved by user
+- **Issue:** [hornley/GestureDeck#22](https://github.com/hornley/GestureDeck/issues/22)
 - **Baseline:** `hornley/main` at `0d3ca14`
 - **Product context:** [`PRODUCT.md`](../../../PRODUCT.md)
 
