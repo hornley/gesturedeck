@@ -151,7 +151,7 @@ h1 {
 }
 
 .connection-copy[data-state="connected"] { color: var(--good); }
-.connection-copy[data-state="error"] { color: #ffc3a9; }
+.connection-copy[data-state="error"] { color: var(--bad); }
 
 .pairing-panel {
   margin-top: 1rem;
@@ -390,3 +390,32 @@ h1 {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+:root {
+  color-scheme: light;
+  --ink: oklch(96% .014 84);
+  --panel: oklch(98% .009 84);
+  --panel-raised: oklch(94% .014 84);
+  --paper: oklch(29% .018 75);
+  --muted: oklch(49% .018 80);
+  --muted-dim: oklch(58% .015 80);
+  --line: oklch(88% .018 84);
+  --signal: oklch(53% .12 38);
+  --signal-pressed: oklch(45% .12 38);
+  --good: oklch(46% .075 139);
+  --bad: oklch(49% .14 32);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+body { background: var(--ink); }
+.brand-mark { transform: none; }
+.connection-panel, .pairing-panel, .controller { background: var(--panel); box-shadow: none; }
+.connection-light,
+.connection-panel:has(.connection-copy[data-state="connected"]) .connection-light,
+.connection-panel:has(.connection-copy[data-state="error"]) .connection-light { box-shadow: none; }
+.pairing-panel input, .jump-row input { background: var(--panel-raised); }
+.connect-button, .transport-button--next { color: #fffaf4; }
+.transport-button { background: var(--panel-raised); }
+.go-button { background: oklch(87% .035 139); color: oklch(31% .05 139); }
+.disconnect-button { color: var(--muted); }
