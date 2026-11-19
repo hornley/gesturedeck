@@ -1,16 +1,16 @@
 :root {
-  color-scheme: dark;
-  --ink: #101916;
-  --panel: #18231f;
-  --panel-raised: #202d27;
-  --paper: #f0eee6;
-  --muted: #a9b3aa;
-  --muted-dim: #78877c;
-  --line: rgba(235, 240, 223, .14);
-  --signal: #e8aa56;
-  --signal-pressed: #c77b34;
-  --good: #9dc59c;
-  --bad: #f19a79;
+  color-scheme: light;
+  --ink: oklch(96% .014 84);
+  --panel: oklch(98% .009 84);
+  --panel-raised: oklch(94% .014 84);
+  --paper: oklch(29% .018 75);
+  --muted: oklch(49% .018 80);
+  --line: oklch(88% .018 84);
+  --line-strong: oklch(82% .02 84);
+  --signal: oklch(53% .12 38);
+  --signal-pressed: oklch(45% .12 38);
+  --good: oklch(46% .075 139);
+  --bad: oklch(49% .14 32);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   font-family: "Avenir Next", Avenir, "Trebuchet MS", system-ui, sans-serif;
   background: var(--ink);
@@ -26,9 +26,7 @@ body {
   min-width: 300px;
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(ellipse at 100% 0%, rgba(80, 112, 88, .17), transparent 43rem),
-    linear-gradient(155deg, #15201b, var(--ink) 65%);
+  background: var(--ink);
 }
 
 button,
@@ -74,13 +72,13 @@ input:focus-visible {
 .brand-mark {
   width: 2.8rem;
   height: 2.8rem;
-  border: 1px solid rgba(232, 170, 86, .52);
+  border: 1px solid var(--line);
   border-radius: .9rem;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: .19rem;
-  transform: rotate(-5deg);
+  transform: none;
 }
 
 .brand-mark span {
@@ -119,7 +117,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: .7rem;
-  background: rgba(32, 45, 39, .72);
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: .9rem;
 }
@@ -130,17 +128,14 @@ h1 {
   height: .55rem;
   border-radius: 50%;
   background: var(--signal);
-  box-shadow: 0 0 .8rem rgba(232, 170, 86, .35);
 }
 
 .connection-panel:has(.connection-copy[data-state="connected"]) .connection-light {
   background: var(--good);
-  box-shadow: 0 0 .8rem rgba(157, 197, 156, .38);
 }
 
 .connection-panel:has(.connection-copy[data-state="error"]) .connection-light {
   background: var(--bad);
-  box-shadow: 0 0 .8rem rgba(241, 154, 121, .35);
 }
 
 .connection-copy {
@@ -156,7 +151,7 @@ h1 {
 .pairing-panel {
   margin-top: 1rem;
   padding: 1rem;
-  background: rgba(32, 45, 39, .66);
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 1rem;
 }
@@ -182,14 +177,14 @@ h1 {
   width: 100%;
   min-height: 3.1rem;
   padding: .65rem .8rem;
-  border: 1px solid rgba(240, 238, 230, .2);
+  border: 1px solid var(--line);
   border-radius: .8rem;
-  background: #111a16;
+  background: var(--panel-raised);
   color: var(--paper);
   font-size: .95rem;
 }
 
-.pairing-panel input::placeholder { color: var(--muted-dim); }
+.pairing-panel input::placeholder { color: var(--muted); }
 
 .pairing-help {
   margin: .55rem 0 0;
@@ -205,13 +200,13 @@ h1 {
   border: 0;
   border-radius: .8rem;
   background: var(--signal);
-  color: #24190f;
+  color: #fffaf4;
   font-size: .95rem;
   font-weight: 750;
   transition: background-color 120ms ease, transform 120ms ease;
 }
 
-.connect-button:not(:disabled):hover { background: #f0b668; }
+.connect-button:not(:disabled):hover { background: var(--signal-pressed); }
 .connect-button:not(:disabled):active { transform: translateY(1px) scale(.99); }
 
 .connected-as {
@@ -227,10 +222,9 @@ h1 {
 .controller {
   margin-top: 1rem;
   padding: 1.15rem;
-  background: linear-gradient(145deg, rgba(32, 45, 39, .96), rgba(24, 35, 31, .96));
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 1.35rem;
-  box-shadow: 0 1.2rem 3.4rem rgba(0, 0, 0, .2);
 }
 
 .position-block {
@@ -238,7 +232,7 @@ h1 {
   border-bottom: 1px solid var(--line);
 }
 
-.position-label { color: var(--muted-dim); }
+.position-label { color: var(--muted); }
 
 .slide-position {
   margin: .22rem 0 0;
@@ -266,9 +260,9 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: .58rem;
-  border: 1px solid rgba(240, 238, 230, .17);
+  border: 1px solid var(--line);
   border-radius: .95rem;
-  background: #29372f;
+  background: var(--panel-raised);
   color: var(--paper);
   font-size: 1.03rem;
   font-weight: 650;
@@ -277,16 +271,16 @@ h1 {
 
 .transport-button--next {
   background: var(--signal);
-  border-color: transparent;
-  color: #24190f;
+  border-color: var(--signal);
+  color: #fffaf4;
 }
 
 .transport-button:not(:disabled):active,
 .go-button:not(:disabled):active,
 .disconnect-button:active { transform: translateY(1px) scale(.985); }
 
-.transport-button:not(:disabled):hover { border-color: rgba(240, 238, 230, .38); }
-.transport-button--next:not(:disabled):hover { background: #f0b668; }
+.transport-button:not(:disabled):hover { border-color: var(--line-strong); }
+.transport-button--next:not(:disabled):hover { background: var(--signal-pressed); }
 
 .arrow {
   width: .65rem;
@@ -315,27 +309,27 @@ h1 {
   min-width: 48px;
   min-height: 3.2rem;
   padding: .6rem .85rem;
-  border: 1px solid rgba(240, 238, 230, .18);
+  border: 1px solid var(--line);
   border-radius: .8rem;
-  background: #111a16;
+  background: var(--panel-raised);
   color: var(--paper);
   font-size: 1.1rem;
   font-variant-numeric: tabular-nums;
 }
 
-.jump-row input::placeholder { color: #68776c; }
+.jump-row input::placeholder { color: var(--muted); }
 
 .go-button {
   min-height: 3.2rem;
   border: 0;
   border-radius: .8rem;
-  background: #d9e1d0;
-  color: #17231c;
+  background: oklch(87% .035 139);
+  color: oklch(31% .05 139);
   font-size: .96rem;
   font-weight: 750;
 }
 
-.go-button:not(:disabled):hover { background: #f0eee6; }
+.go-button:not(:disabled):hover { background: oklch(83% .045 139); }
 
 .action-status {
   min-height: 1.5rem;
@@ -356,7 +350,7 @@ h1 {
 
 .footer p {
   margin: 0;
-  color: var(--muted-dim);
+  color: var(--muted);
   font-size: .72rem;
   line-height: 1.45;
 }
@@ -365,15 +359,15 @@ h1 {
   min-height: 3rem;
   padding: .35rem .9rem;
   flex: 0 0 auto;
-  border: 1px solid rgba(240, 238, 230, .2);
+  border: 1px solid var(--line);
   border-radius: .8rem;
   background: transparent;
-  color: #d4d9cf;
+  color: var(--muted);
   font-size: .84rem;
   font-weight: 600;
 }
 
-.disconnect-button:hover { border-color: rgba(240, 238, 230, .48); }
+.disconnect-button:hover { border-color: var(--line-strong); }
 
 @media (max-height: 680px) and (orientation: landscape) {
   .remote-shell { min-height: 100vh; padding-top: max(.7rem, env(safe-area-inset-top, 0px)); }
@@ -390,34 +384,3 @@ h1 {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
-
-:root {
-  color-scheme: light;
-  --ink: oklch(96% .014 84);
-  --panel: oklch(98% .009 84);
-  --panel-raised: oklch(94% .014 84);
-  --paper: oklch(29% .018 75);
-  --muted: oklch(49% .018 80);
-  --muted-dim: oklch(58% .015 80);
-  --line: oklch(88% .018 84);
-  --signal: oklch(53% .12 38);
-  --signal-pressed: oklch(45% .12 38);
-  --good: oklch(46% .075 139);
-  --bad: oklch(49% .14 32);
-  background: var(--ink);
-  color: var(--paper);
-}
-
-body { background: var(--ink); }
-.brand-mark { transform: none; }
-.connection-panel, .pairing-panel, .controller { background: var(--panel); box-shadow: none; }
-.connection-light,
-.connection-panel:has(.connection-copy[data-state="connected"]) .connection-light,
-.connection-panel:has(.connection-copy[data-state="error"]) .connection-light { box-shadow: none; }
-.pairing-panel input, .jump-row input { background: var(--panel-raised); }
-.connect-button, .transport-button--next { color: #fffaf4; }
-.transport-button { background: var(--panel-raised); }
-.transport-button--next { background: var(--signal); border-color: var(--signal); }
-.transport-button--next:not(:disabled):hover { background: var(--signal-pressed); }
-.go-button { background: oklch(87% .035 139); color: oklch(31% .05 139); }
-.disconnect-button { color: var(--muted); }
