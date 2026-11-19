@@ -417,5 +417,7 @@ body { background: var(--ink); }
 .pairing-panel input, .jump-row input { background: var(--panel-raised); }
 .connect-button, .transport-button--next { color: #fffaf4; }
 .transport-button { background: var(--panel-raised); }
+.transport-button--next { background: var(--signal); border-color: var(--signal); }
+.transport-button--next:not(:disabled):hover { background: var(--signal-pressed); }
 .go-button { background: oklch(87% .035 139); color: oklch(31% .05 139); }
 .disconnect-button { color: var(--muted); }
