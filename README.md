@@ -65,7 +65,7 @@ npm run check
 npm run lint
 ```
 
-The project uses Node.js's built-in test runner. GitHub Actions runs the test, syntax-check, and lint commands on Node.js 20. To prepare the Vercel static assets locally, run `npm run build:vercel`; it writes the deployable files to `dist/`.
+The project uses Node.js's built-in test runner. GitHub Actions runs the test, syntax-check, and lint commands on Node.js 20. To prepare the Vercel static assets locally, run `npm run build:vercel`; it writes the deployable files to `dist/site/`.
 
 The development server defaults to `HOST=0.0.0.0` and `PORT=5173`. `HOST` also accepts `127.0.0.1`; set `PORT` to use another port. The local Canva extension bridge recognizes port `5173`.
 
