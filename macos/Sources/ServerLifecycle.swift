@@ -25,6 +25,29 @@ struct ServerReadiness {
     }
 }
 
+struct ServerLifecycle {
+    private(set) var state = ServerState.starting
+    private var readiness = ServerReadiness()
+
+    mutating func consume(_ output: String) -> Bool {
+        guard case .starting = state, readiness.consume(output) else { return false }
+        state = .ready
+        return true
+    }
+
+    mutating func fail(_ message: String) -> Bool {
+        guard serverTerminationMessage(for: state) != nil else { return false }
+        state = .failed(message)
+        return true
+    }
+
+    mutating func processTerminated(shutdownRequested: Bool) -> String? {
+        guard !shutdownRequested, let message = serverTerminationMessage(for: state) else { return nil }
+        state = .failed(message)
+        return message
+    }
+}
+
 func serverTerminationMessage(for state: ServerState) -> String? {
     switch state {
     case .starting:

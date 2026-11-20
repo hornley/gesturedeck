@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @Published private(set) var state = ServerState.starting
     private var process: Process?
     private var outputReader: FileHandle?
-    private var readiness = ServerReadiness()
+    private var lifecycle = ServerLifecycle()
     private var isShuttingDown = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,9 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         child.standardError = output
         child.terminationHandler = { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, !self.isShuttingDown,
-                      let message = serverTerminationMessage(for: self.state) else { return }
-                self.fail(message)
+                guard let self,
+                      self.lifecycle.processTerminated(shutdownRequested: self.isShuttingDown) != nil else { return }
+                self.state = self.lifecycle.state
+                self.outputReader?.readabilityHandler = nil
             }
         }
         outputReader = output.fileHandleForReading
@@ -67,13 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func receive(_ text: String) {
-        guard !isShuttingDown, case .starting = state else { return }
-        if readiness.consume(text) { state = .ready }
+        guard !isShuttingDown, lifecycle.consume(text) else { return }
+        state = lifecycle.state
     }
 
     private func fail(_ message: String) {
-        guard !isShuttingDown, serverTerminationMessage(for: state) != nil else { return }
-        state = .failed(message)
+        guard !isShuttingDown, lifecycle.fail(message) else { return }
+        state = lifecycle.state
         outputReader?.readabilityHandler = nil
         if let process, process.isRunning { process.terminate() }
     }
