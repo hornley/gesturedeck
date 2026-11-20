@@ -49,7 +49,7 @@ const appPath = path.join(projectRoot, 'dist', 'macos', 'GestureDeck.app');
 const contentsPath = path.join(appPath, 'Contents');
 const resourcesPath = path.join(contentsPath, 'Resources');
 const serverRoot = path.join(resourcesPath, 'GestureDeck');
-const nodePath = path.join(resourcesPath, 'node');
+const nodePath = path.join(serverRoot, 'node');
 const appExecutable = path.join(contentsPath, 'MacOS', 'GestureDeck');
 
 await checkLifecycle();
