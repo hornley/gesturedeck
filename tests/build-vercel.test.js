@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outputRoot = path.join(projectRoot, 'dist');
+const outputRoot = path.join(projectRoot, 'dist', 'site');
 
 async function exists(relativePath) {
   try {
@@ -37,6 +37,6 @@ test('Vercel build retains required presentation and remote assets', async (t) =
     'node_modules/pdfjs-dist/build/pdf.mjs',
     'node_modules/pdfjs-dist/build/pdf.worker.mjs',
   ]) {
-    assert.equal(await exists(retained), true, `${retained} should remain in dist`);
+    assert.equal(await exists(retained), true, `${retained} should remain in dist/site`);
   }
 });

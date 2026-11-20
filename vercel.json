@@ -7,7 +7,7 @@
     "api/cloud-remote-ws.js": { "regions": ["sin1"] }
   },
   "buildCommand": "npm run build:vercel",
-  "outputDirectory": "dist",
+  "outputDirectory": "dist/site",
   "rewrites": [
     { "source": "/api/cloud-remote/start", "destination": "/api/cloud-remote?__gd_route=start" },
     { "source": "/api/cloud-remote/renew-invite", "destination": "/api/cloud-remote?__gd_route=renew-invite" },
