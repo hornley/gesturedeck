@@ -18,15 +18,11 @@ struct GestureDeckApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
-    enum ServerState {
-        case starting
-        case ready
-        case failed(String)
-    }
-
     @Published private(set) var state = ServerState.starting
     private var process: Process?
-    private var outputBuffer = ""
+    private var outputReader: FileHandle?
+    private var readiness = ServerReadiness()
+    private var isShuttingDown = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let serverDirectory = Bundle.main.resourceURL!.appendingPathComponent("GestureDeck", isDirectory: true)
@@ -39,15 +35,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         child.environment = ProcessInfo.processInfo.environment.merging(["HOST": "0.0.0.0", "PORT": "5173"]) { _, new in new }
         child.standardOutput = output
         child.standardError = output
-        child.terminationHandler = { [weak self] child in
+        child.terminationHandler = { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, case .starting = self.state else { return }
-                self.fail("The local server stopped before it was ready. If port 5173 is already in use, quit the other app using it and reopen GestureDeck.")
+                guard let self, !self.isShuttingDown,
+                      let message = serverTerminationMessage(for: self.state) else { return }
+                self.fail(message)
             }
         }
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        outputReader = output.fileHandleForReading
+        outputReader?.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else {
+                handle.readabilityHandler = nil
+                return
+            }
             Task { @MainActor [weak self] in self?.receive(text) }
         }
 
@@ -55,30 +56,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         do {
             try child.run()
         } catch {
-            output.fileHandleForReading.readabilityHandler = nil
             fail("GestureDeck could not start its bundled Node server: \(error.localizedDescription)")
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isShuttingDown = true
+        outputReader?.readabilityHandler = nil
         if let process, process.isRunning { process.terminate() }
     }
 
     private func receive(_ text: String) {
-        outputBuffer += text
-        while let newline = outputBuffer.firstIndex(of: "\n") {
-            let line = String(outputBuffer[..<newline]).trimmingCharacters(in: .newlines)
-            outputBuffer.removeSubrange(...newline)
-            if line.hasPrefix("GestureDeck listening on "), case .starting = state {
-                state = .ready
-                return
-            }
-        }
+        guard !isShuttingDown, case .starting = state else { return }
+        if readiness.consume(text) { state = .ready }
     }
 
     private func fail(_ message: String) {
-        guard case .starting = state else { return }
+        guard !isShuttingDown, serverTerminationMessage(for: state) != nil else { return }
         state = .failed(message)
+        outputReader?.readabilityHandler = nil
         if let process, process.isRunning { process.terminate() }
     }
 }
