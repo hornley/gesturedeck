@@ -69,6 +69,18 @@ The project uses Node.js's built-in test runner. GitHub Actions runs the test, s
 
 The development server defaults to `HOST=0.0.0.0` and `PORT=5173`. `HOST` also accepts `127.0.0.1`; set `PORT` to use another port. The local Canva extension bridge recognizes port `5173`.
 
+## macOS app (Apple Silicon)
+
+Build the self-contained app on an Apple Silicon Mac with Xcode Command Line Tools and Node.js/npm available:
+
+```sh
+npm ci
+npm run build:macos
+open dist/macos/GestureDeck.app
+```
+
+The app bundles its Node runtime, so running it does not require Terminal or a separate Node installation. It supports the sample deck, local PDF presentation, and local phone remote. Canva control remains in Chrome with the extension. Phone pairing requires a trusted network the phone can reach; local phone traffic is unencrypted unless tunneled through a service such as Tailscale. The initial build is unsigned and does not include a DMG, notarization, or Intel Mac support.
+
 ## Project layout
 
 - `app.js`, `index.html`, and `workspace.html`: browser UI and page orchestration.
