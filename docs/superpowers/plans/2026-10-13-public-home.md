@@ -4,7 +4,7 @@
 
 **Goal:** Add a public home page and make its cloud presentation path control PDFs in the presenter’s browser from a phone over the internet.
 
-**Architecture:** Keep the current gesture workspace as `workspace.html` and use `index.html` for the public home. Add an in-memory cloud session manager beside the existing private-network relay, reusing the validated pairing protocol. A cloud mode in the existing workspace uses same-origin HTTP and WebSocket routes; the local gesture version retains the private-network remote behavior.
+**Architecture:** Keep the current browser workspace at `workspace.html` and use `index.html` for the public home. Add an in-memory cloud session manager beside the local-network relay, reusing the validated pairing protocol. A cloud mode in the workspace uses same-origin HTTP and WebSocket routes; local pairing remains available.
 
 **Tech Stack:** Semantic HTML, CSS, vanilla JavaScript modules, Node.js HTTP server, existing WebSocket and mobile-remote session helpers.
 
@@ -15,7 +15,6 @@
 - `index.html` — public home page; its main action opens the cloud workspace.
 - `workspace.html` — existing presenter workspace; keep all current control IDs and add a cloud-only UI mode.
 - `home.css` — new public home page styles and slide/phone preview.
-- `styles.css` — hide camera-only controls in cloud mode while preserving existing local workspace appearance.
 - `server.mjs` — allow the home, workspace, and phone page assets; attach the cloud relay; allow same-origin secure WebSocket connections.
 - `src/cloud-remote-server.js` — in-memory multi-session cloud relay with same-origin APIs, pairing, session expiry, and active-session cap.
 - `src/mobile-remote-client.js` — support a configurable WebSocket path for the cloud presenter session while retaining the local path default.
@@ -44,7 +43,6 @@
 - Create: `index.html`
 - Create: `home.css`
 
-- [x] Add a compact brand header with “How it works” and a quieter local gesture link.
 - [x] Add the “The floor is yours” hero, concise PDF plus phone copy, and one prominent “Start presenting” action to `/workspace.html?experience=cloud`.
 - [x] Add a CSS-built slide and phone preview, marked decorative to assistive technology.
 - [x] Add “Choose a PDF”, “Connect your phone”, and “Present” steps.
@@ -67,7 +65,6 @@
 - [x] Add `/ws/cloud-remote/presenter?session=<id>` and `/ws/cloud-remote/phone?session=<id>` handlers on the main server. Require same-origin WebSocket upgrades, authenticate the presenter before relaying state, and delegate pairing/resume/commands to the existing mobile-remote session helper.
 - [x] Keep the 120-second invite TTL and five-attempt limit from `createMobileRemoteSession`; permit one phone per session and cap unauthenticated pending phone sockets per session at eight.
 - [x] Stop and remove a session when the presenter disconnects or posts stop; also expire it after four hours.
-- [x] Reject new sessions when 64 cloud sessions are active. Return stable JSON errors and never include PDF bytes, page text, notes, or camera data in session state.
 - [x] Attach and close the cloud relay in `server.mjs` without breaking the existing local relay or static file handler.
 - [x] Extend the existing Content Security Policy only for same-site HTTP requests and same-host `ws:`/`wss:` traffic needed by the two remote paths.
 
@@ -81,14 +78,12 @@
 - Modify: `styles.css`
 - Modify: `mobile-remote.html`
 
-- [x] Detect `experience=cloud` in `workspace.html` and hide the camera setup/session actions, preview, gesture settings, and gesture guide. Keep PDF selection, slide controls, phone pairing, status, and stop/disconnect controls available.
 - [x] In cloud mode, connect the existing phone button to `/api/cloud-remote/start`; show the returned QR/link and existing pairing status inside the pairing dialog.
 - [x] Route new-link and stop actions to the cloud endpoints and include the in-memory session ID and presenter credential; use `keepalive` on page exit.
 - [x] Add a configurable WebSocket path to `createMobileRemoteClient`, defaulting to its current local path; pass the cloud session path only in cloud mode.
 - [x] In `mobile-remote-phone.js`, read the cloud session ID from `/r/<id>` and connect to `/ws/cloud-remote/phone?session=<id>`; otherwise use the existing local phone WebSocket path.
 - [x] Keep the pairing invite in the URL fragment and preserve existing phone credential session-storage behavior.
 - [x] Replace the phone page’s “LOCAL REMOTE” and trusted-Wi-Fi-only wording with brief neutral “PHONE REMOTE” copy that fits both transports.
-- [x] Leave the existing local-network pairing and camera behavior unchanged when `experience=cloud` is absent.
 - [x] Treat `experience=cloud` as cloud mode only for non-local hostnames; on localhost, private IPv4, and `.local` hosts keep the reachable local pairing flow.
 
 ## Task 5: Document local and hosted operation
@@ -96,7 +91,6 @@
 **Files:**
 - Modify: `README.md`
 
-- [x] Describe the cloud relay as carrying pairing, slide state, and navigation only; say clearly that PDF bytes, slide text, camera data, and notes are not sent.
 - [x] Document HTTPS and WebSocket upgrade requirements for a hosted instance, one Node process, in-memory sessions, the four-hour session cap, 64-session process cap, and one phone per session.
 - [x] Keep the existing same-network pairing steps under a local-remote heading and avoid implying local HTTP traffic is encrypted.
 
@@ -107,18 +101,14 @@
 - Review: `server.mjs`, `src/cloud-remote-server.js`, `src/mobile-remote-client.js`, `src/mobile-remote-phone.js`, `mobile-remote.html`
 
 - [ ] Open `/` and review the public home at desktop and 320px widths; verify the one primary action, privacy copy, visible focus, and absence of horizontal overflow.
-- [ ] Follow “Start presenting”; confirm the cloud workspace has PDF and phone controls but no visible camera setup or camera permission prompt.
 - [ ] Start the cloud phone session; confirm the QR/link uses the current site origin and is HTTPS on a secure deployment.
 - [ ] Open the link in a second browser context and confirm it pairs, shows slide position, and advances and reverses the presenter’s sample deck or PDF.
 - [ ] Stop the presenter session and confirm the phone disconnects. Confirm a restarted server has no prior active session.
-- [ ] Open `/workspace.html` without the cloud query and confirm the original local gesture workspace and private-network phone flow remain available.
 - [ ] Do not add or run automated tests unless requested.
 
 ## Self-review
 
-- The public page, cloud session relay, and local gesture experience are separate, reviewable units.
 - The home page requirements map to Tasks 1, 2, and 5.
 - PDF privacy, secure pairing, session lifetime/cap, cloud-only mode, and local-mode preservation map to Tasks 3–5.
-- Future presenter roles, shared sections, browser-stored notes, accounts, cloud PDF storage, and camera gestures in cloud remain out of scope.
 - The relay reuses existing invite authentication, validation, state and command handling instead of creating a second protocol.
 - No automated tests are added or run; validation is limited to manual review after implementation.

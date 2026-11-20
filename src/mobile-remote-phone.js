@@ -439,7 +439,7 @@ export function mountMobileRemotePhone({
           ? 'Waiting for a connection to remove this phone…'
           : 'Disconnected. Reconnecting…', 'error');
         scheduleRetry();
-      } else showRecovery('Could not connect. Check the local Wi-Fi connection, then tap Connect to try again.', 'connection-failed');
+      } else showRecovery('Could not connect. Check the local network connection, then tap Connect to try again.', 'connection-failed');
       return;
     }
     socket = nextSocket;
@@ -481,7 +481,7 @@ export function mountMobileRemotePhone({
           ? 'Waiting for a connection to remove this phone…'
           : 'Disconnected. Reconnecting…', 'error');
         scheduleRetry();
-      } else showRecovery('Connection closed. Check the Wi-Fi connection, then tap Connect to try again.', 'connection-closed');
+      } else showRecovery('Connection closed. Check the network connection, then tap Connect to try again.', 'connection-closed');
     };
   }
 

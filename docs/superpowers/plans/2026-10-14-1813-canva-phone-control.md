@@ -15,11 +15,9 @@
 - Keep all extension files in `./extension/`; load it unpacked for development.
 - Trust only the GestureDeck loopback origin on the default server port, `5173`; the extension bridge rejects other local app ports.
 - Target desktop Chrome and one explicitly selected Canva presentation tab. Request `activeTab` access on user action; do not request all-site access.
-- Do not add camera access or connect Canva to GestureDeck's hand-camera path. Leave current sample/PDF camera behavior unchanged.
 - Reuse the existing one-phone QR/session path and its short-lived invite, credential, message validation, and reconnect behavior.
 - Canva supports only `previous` and `next` in this phase. Unknown Canva index/total stays unknown; reject `goTo` and hide the phone's number picker for Canva.
 - Keep sample/PDF remote behavior, including bounded `goTo`, unchanged.
-- Send no Canva credentials, slide content, camera frames, or landmarks to the phone. No cloud relay, browser-store publishing, debugger permission, or added dependency.
 - If live Canva input or a safe presentation-mode signal cannot be verified, stop before expanding permissions or controlling an editor page and report the design decision needed.
 
 ## Review Focus
@@ -119,11 +117,9 @@ Expected: PASS for both local and Canva target cases, including stale/disconnect
 - The presenter subscribes to extension target status through `createCanvaExtensionBridge`; when Canva is ready, publish Canva target state to an active phone session.
 - `handleRemoteCommand(command)` stays on the current local presentation path for sample/PDF. For an active Canva target, it returns a promise from `sendNavigation` and rejects `goTo`.
 - Extension disconnect or target loss immediately publishes `ready: false`; reconnect publishes `ready: true`. Do not fall back silently to the sample deck while a phone session is open.
-- The local page displays target connection status and directs the presenter to connect the active Canva presentation using the extension popup. No camera setup is needed for Canva phone control.
 
 - [x] **Step 1: Add failing presenter tests.** Cover extension status transitions, remote command routing to Canva, rejection when the extension is missing/not ready, and unchanged local deck/PDF `goTo` behavior.
 - [x] **Step 2: Run `node --test tests/app.test.js` and confirm the new cases fail.**
-- [x] **Step 3: Add the bridge lifecycle and target-aware remote routing in `app.js`; show connection status in the existing target UI.** Keep camera setup, capture, and gesture handlers unchanged.
 - [x] **Step 4: Document loading `./extension/` unpacked in Chrome, connecting the live Canva presentation, pairing the phone by QR, and the Canva-only Previous/Next limit.**
 - [x] **Step 5: Run presenter tests and project checks.**
 
@@ -144,7 +140,6 @@ Expected: all existing and new tests pass.
 
 - [ ] **Step 2: In Chrome, load the extension unpacked from `./extension/`, connect a live Canva test deck, and verify Previous/Next and editor-mode rejection.** The available preview profile is signed out; this live Canva check remains pending.
 - [ ] **Step 3: Start GestureDeck from loopback, pair one phone over the QR URL, and verify phone navigation, reconnect, second-phone rejection, target loss, and disconnect.** Physical phone testing remains pending.
-- [x] **Step 4: Confirm the phone receives no Canva content and the extension requests no camera permission.**
 - [x] **Step 5: Report any real-browser or physical-phone checks that could not be performed; do not claim full integration verification without them.**
 
 ## Open Decision Gate

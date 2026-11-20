@@ -420,7 +420,7 @@ test('valid commands are forwarded in a minimal shape and state updates expose o
   assert.deepEqual(phoneSocket.messages.at(-1), { type: 'state', index: 2, total: 3, busy: false });
   assert.equal(harness.session.publishState({ index: 3, total: 3, busy: false }), false);
   assert.equal(harness.session.handlePresenterMessage(harness.presenterSocket, {
-    type: 'state', index: 1, total: 3, busy: true, slideText: 'secret', landmarks: [1, 2, 3],
+    type: 'state', index: 1, total: 3, busy: true, slideText: 'secret', privateData: [1, 2, 3],
   }), true);
   assert.deepEqual(phoneSocket.messages.at(-1), { type: 'state', index: 1, total: 3, busy: true });
 });

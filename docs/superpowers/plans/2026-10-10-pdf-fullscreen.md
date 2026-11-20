@@ -103,8 +103,6 @@ function syncPdfFullscreen() {
 }
 ```
 
-  `enterPdfFullscreen()` must call `requestFullscreen()` directly from the button click handler before any awaited work. `syncPdfFullscreen()` should run on `fullscreenchange`. Do not change camera mode.
-
 - [ ] **Step 3: Update `renderSourceUi()` and `renderSlide()`** to show the entry button only when `state.pdf` exists and to update the fullscreen position and Previous/Next disabled states using the same snapshot and `state.pdfRendering` rules as workspace buttons. Keep the toolbar's live region text unchanged during resize renders when the page number has not changed.
 
 - [ ] **Step 4: Bind controls and keys** in `bindEvents()`: entry/exit clicks, fullscreen Previous/Next to the existing `previousSlide()`/`nextSlide()` functions, pointer movement to reveal the toolbar, focus entering the toolbar to keep it visible, and `fullscreenchange` to synchronize. In the keydown guard, allow left/right arrows when focus is on a button inside `#pdf-fullscreen-toolbar`; continue excluding editable fields and non-toolbar buttons.
@@ -117,7 +115,7 @@ function syncPdfFullscreen() {
 
 **Files:** Modify `README.md`.
 
-- [ ] **Step 1: Update the PDF usage paragraph** to explain **Present fullscreen**, the fading Previous/Next/Exit controls, arrow keys, swipe gestures, and Escape. Mention that browser fullscreen requires a user click.
+- [ ] **Step 1: Update the PDF usage paragraph** to explain **Present fullscreen**, the fading Previous/Next/Exit controls, arrow keys, and Escape. Mention that browser fullscreen requires a user click.
 - [ ] **Step 2: Commit** with `git commit -m "docs: explain PDF fullscreen presenting"`.
 - [ ] **Step 3: Review** the changed files against `docs/superpowers/specs/2026-10-10-pdf-fullscreen-design.md`, checking every interaction and error path. Resolve any review findings before merging.
 

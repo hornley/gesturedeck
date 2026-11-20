@@ -11,22 +11,22 @@ npm ci
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173) to use the sample deck. Choose **Open a PDF** to present an unprotected PDF from this device. Use the Previous and Next buttons or the left and right arrow keys; for a PDF, choose **Present fullscreen** after importing it. The workspace never requests camera access.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173) to use the sample deck. Choose **Open a PDF** to present an unprotected PDF from this device. Use the Previous and Next buttons or the left and right arrow keys; for a PDF, choose **Present fullscreen** after importing it.
 
 ## Phone-control options
 
 | Option | Presenter and phone requirements | Controls |
 | --- | --- | --- |
-| Local remote | Same trusted Wi-Fi or Tailscale network; Canva still needs internet | Sample deck, PDF, or a connected Canva tab (with extension) |
+| Local remote | Same trusted Wi-Fi, iPhone Personal Hotspot, or Tailscale; the phone must be able to reach the laptop | Sample deck, PDF, or a connected Canva tab (with extension) |
 | Canva remote | Chrome extension, Canva Present/View tab, and either the local or hosted GestureDeck workspace | Previous/Next in the selected Canva tab |
 | Hosted remote | HTTPS GestureDeck deployment with Redis configured; devices may use different networks | Sample deck, PDF, or Canva on a supported workspace origin |
 
 ### Use the local phone remote
 
-1. Open GestureDeck on the presenter computer at `http://localhost:5173` or `http://127.0.0.1:5173`, and use the sample deck.
-2. Connect the presenter and phones to the same trusted Wi-Fi or Tailscale network.
-3. Choose **Connect phone**, select the private network interface used by the phones, and start pairing.
-4. Scan the QR code or share its fallback URL. Up to eight phones can join. The invite lasts five minutes; renewing it keeps already paired phones connected.
+1. Turn on Personal Hotspot on the iPhone and connect the Mac or Windows laptop to it. Start GestureDeck on the laptop at `http://localhost:5173` or `http://127.0.0.1:5173`, then choose **Connect phone**.
+2. Select the laptop network interface used by the hotspot and start pairing.
+3. Scan the QR code with the iPhone or open its fallback URL. This works only if the iPhone can reach the laptop over the hotspot; some hotspot setups may block that connection. Use the hosted remote if the link does not open.
+4. Up to eight phones can join. The invite lasts five minutes; renewing it keeps already paired phones connected.
 5. Use **Previous** and **Next** on a phone. The numbered picker is available for the sample deck and PDFs. Canva exposes Previous/Next only.
 
 The presenter can remove one phone or disconnect everyone. Each phone can disconnect itself and reconnect after a brief Wi-Fi drop. The temporary phone listener closes when the presenter ends the connection. Phones receive control state, not slide content, PDF files, or filenames. Local HTTP and WebSocket traffic is unencrypted outside a tunnel such as Tailscale, so pair only on a trusted network.
@@ -40,7 +40,7 @@ The presenter can remove one phone or disconnect everyone. Each phone can discon
 
 For local pairing, connect the Canva tab with the extension while the Chrome toolbar is available, then follow [Use the local phone remote](#use-the-local-phone-remote) to pair your phone. After pairing, return to that same Canva tab and choose **Present**.
 
-The phone's **Previous** and **Next** controls remain unavailable until Canva exposes accessible navigation controls, then become available. Readiness comes from Canva controls labeled “Previous page” or “Next page”; controls can be native buttons or elements with `role="button"`. Canva does not expose slide position or count, so phones show readiness and Previous/Next only. The phone's “Navigation sent to Canva” status confirms Chrome completed the key dispatch while the selected tab remained current; it does not confirm that Canva's slide changed. If Canva changes those labels or markup, navigation may stop working. Check Previous and Next in a signed-in presentation after updating the unpacked extension. Chrome warns that the extension requests its `debugger` permission, and displays Chrome's native debugging banner when the extension attaches to send navigation input. The extension does not request camera access. It supports `localhost:5173`, `127.0.0.1:5173`, and the production host above; a self-hosted domain must be added to the extension's origin allowlists. Canva editing mode is refused.
+The phone's **Previous** and **Next** controls remain unavailable until Canva exposes accessible navigation controls, then become available. Readiness comes from Canva controls labeled “Previous page” or “Next page”; controls can be native buttons or elements with `role="button"`. Canva does not expose slide position or count, so phones show readiness and Previous/Next only. The phone's “Navigation sent to Canva” status confirms Chrome completed the key dispatch while the selected tab remained current; it does not confirm that Canva's slide changed. If Canva changes those labels or markup, navigation may stop working. Check Previous and Next in a signed-in presentation after updating the unpacked extension. Chrome warns that the extension requests its `debugger` permission, and displays Chrome's native debugging banner when the extension attaches to send navigation input. It supports `localhost:5173`, `127.0.0.1:5173`, and the production host above; a self-hosted domain must be added to the extension's origin allowlists. Canva editing mode is refused.
 
 ### Use the hosted phone remote
 
@@ -50,12 +50,11 @@ The Vercel deployment uses Upstash Redis for temporary session and relay state. 
 
 ## Privacy and data flow
 
-- The workspace never requests camera access. The Chrome extension also does not request camera access.
 - Imported PDF bytes and rendered pages remain in the browser for the current page session.
 - The local phone remote sends pairing credentials, phone labels, target readiness, slide position and busy state when available, and navigation commands. It does not send presentation media.
 - Hosted sessions use Redis for temporary pairing credentials, phone metadata, target readiness, slide position, busy state, and navigation commands. Sessions expire after up to four hours and invites after five minutes. The relay does not receive PDFs, slide content, rendered pages, notes, or Canva credentials.
 
-Use the hosted relay when phones cannot reach the presenter over the same LAN or Tailscale network. The sample deck works offline; PDF.js assets are served from the local project.
+Use the hosted relay when phones cannot reach the presenter over the same LAN, iPhone hotspot, or Tailscale network. The sample deck works offline; PDF.js assets are served from the local project.
 
 ## Development
 
@@ -73,7 +72,7 @@ The development server defaults to `HOST=0.0.0.0` and `PORT=5173`. `HOST` also a
 ## Project layout
 
 - `app.js`, `index.html`, and `workspace.html`: browser UI and page orchestration.
-- `src/`: PDF, local remote, hosted remote, and development-only camera modules.
+- `src/`: PDF, local remote, and hosted remote modules.
 - `server.mjs`: local development server and local phone pairing routes.
 - `api/` and `vercel.json`: Vercel cloud-relay routes and deployment configuration.
 - `extension/`: Chrome Manifest V3 extension for live Canva control.

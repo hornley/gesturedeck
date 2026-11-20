@@ -64,7 +64,6 @@ Acceptance criteria:
 - Automatic connection-close cleanup cannot stop a replacement hosted session; explicit Stop and page-hide still stop it.
 - A state update concurrent with resume is either included in the atomic snapshot or delivered after the captured cursor.
 - Phone removal completes before close cleanup releases its lease; a stale socket cannot remove a replacement phone.
-- The Canva, PDF, camera, and one-to-eight-phone integration scope remains unchanged.
 
 No test cases or local executable checks are authorized for this change. Keep existing test doubles aligned with script changes when needed. Perform static reviews of the changed paths and a final branch review. Push only the integration branch and open a PR to `wehyn/GestureDeck:main`; leave it unmerged.
 
