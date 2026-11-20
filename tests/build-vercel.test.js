@@ -17,7 +17,7 @@ async function exists(relativePath) {
   }
 }
 
-test('Vercel build omits camera assets and retains PDF and remote assets', async (t) => {
+test('Vercel build retains required presentation and remote assets', async (t) => {
   t.after(() => rm(outputRoot, { recursive: true, force: true }));
 
   const build = spawnSync(process.execPath, ['scripts/build-vercel.mjs'], {
@@ -25,20 +25,6 @@ test('Vercel build omits camera assets and retains PDF and remote assets', async
     encoding: 'utf8',
   });
   assert.equal(build.status, 0, build.stderr || build.stdout);
-
-  for (const removed of [
-    'assets/hand_landmarker.task',
-    'src/camera-session.js',
-    'src/camera-preview.js',
-    'src/hand-overlay.js',
-    'src/hand-tracking.js',
-    'src/local-hand-tracker.js',
-    'src/gesture-engine.js',
-    'node_modules/@mediapipe/tasks-vision/vision_bundle.mjs',
-    'node_modules/@mediapipe/tasks-vision/wasm',
-  ]) {
-    assert.equal(await exists(removed), false, `${removed} should be absent from dist`);
-  }
 
   for (const retained of [
     'workspace.html',

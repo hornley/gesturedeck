@@ -8,8 +8,6 @@ Let a presenter control a PDF presentation from a phone when the presenter and p
 
 The cloud server acts as a temporary relay for pairing and slide navigation. The presenter browser renders the selected PDF and sends only slide position, total slide count, busy state, and navigation messages through the server. The phone receives the current slide position and sends next, previous, or go-to-slide commands.
 
-The root home page starts the cloud presentation path. The existing camera gesture build remains available as a separate local option. The cloud path never requests camera access.
-
 ## Architecture
 
 - Add cloud sessions beside the existing local-network remote. Keep using the existing validated mobile-remote session protocol for pairing, resume, slide state, and command acknowledgement.
@@ -29,7 +27,6 @@ The root home page starts the cloud presentation path. The existing camera gestu
 - One phone controls one presenter’s session. Multiple concurrent sessions can run in the same Node process, but shared presenter roles or assigned presentation sections are future work.
 - Sessions and credentials exist in memory only. A process restart ends active sessions; no database or cross-process session sharing is included.
 - Browser-stored presentation or slide notes, including presenter-specific notes, are future work and remain outside the cloud relay.
-- Camera gestures remain local and are not available in the cloud presentation path.
 
 ## Security and failure behavior
 
@@ -38,7 +35,6 @@ The root home page starts the cloud presentation path. The existing camera gestu
 - Require a valid short-lived invite to pair a phone; permit one phone at a time and cap invalid pairing attempts.
 - Validate message shape and slide bounds using the existing session protocol.
 - End both connections when the presenter stops or the session expires. Surface a simple reconnect or new-link message in the presenter and phone UI.
-- Do not put the PDF, slide text, notes, or camera data in session state or relay messages.
 
 ## Review checklist
 
@@ -48,4 +44,3 @@ The root home page starts the cloud presentation path. The existing camera gestu
 - A pairing invite expires after two minutes and stops accepting attempts after five failures.
 - Another session identifier or credential cannot attach a phone to the wrong presentation.
 - Stopping the presenter ends the temporary phone session.
-- The local-network gesture workspace continues to use its current local remote flow.

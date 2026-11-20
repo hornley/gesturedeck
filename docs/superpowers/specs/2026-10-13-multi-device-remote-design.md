@@ -12,8 +12,6 @@ Allow up to eight phones to control the same active GestureDeck presentation at 
 
 GestureDeck is a local-first browser presentation controller. Its current mobile remote starts one temporary LAN listener, pairs one phone, and relays navigation commands to the presenter browser over a loopback WebSocket. The presenter browser owns the sample deck or imported PDF and remains the source of slide state. The existing pairing link is one-use and expires after two minutes. A phone disconnect currently stops the whole remote session.
 
-The multi-device change extends this flow. It does not move the presentation or PDF data to the phone, start the camera, or add an internet relay.
-
 ## Scope
 
 ### Included
@@ -32,7 +30,6 @@ The multi-device change extends this flow. It does not move the presentation or 
 - More than eight paired phone records in one session.
 - Read-only phone participants, per-phone permissions, or a designated active controller.
 - Native phone applications, user accounts, permanent device profiles, cloud relay, or cross-network pairing.
-- Presentation content, PDF data, camera frames, or hand landmarks sent to phones.
 
 ## User experience
 
@@ -90,8 +87,8 @@ The server sends presenter list updates when a phone pairs, resumes, disconnects
 - Pairing remains off until the presenter explicitly starts it. The one invite is carried in the URL fragment and is reusable for five minutes, then expires.
 - Pairing remains limited to the selected private network interface. The session and credentials are held in memory; phone reconnect credentials remain in that tab's `sessionStorage` as in the current design.
 - The optional nickname and coarse device type are transmitted only for the active remote session. The server validates allowed device-type values, bounds and sanitizes nickname text, and renders it as text. It does not store a raw user agent, exact hardware identity, or a persistent profile.
-- Phones receive only slide index, slide count, and busy state. They receive no deck title, slide content, PDF filename or bytes, rendered page, camera frames, or hand landmarks.
-- The listener serves only the isolated phone page and its assets. The presenter workspace, PDF.js resources, and hand-tracking model remain unavailable through the phone listener.
+- Phones receive only slide index, slide count, and busy state. They receive no deck title, slide content, PDF filename or bytes, or rendered page.
+- The listener serves only the isolated phone page and its assets. The presenter workspace and PDF.js resources remain unavailable through the phone listener.
 - Local HTTP and WebSocket traffic remains unencrypted. The presenter UI and documentation continue to advise pairing only on a trusted local network. The five-minute reusable invite and capacity limit make it especially important to share the QR only with intended participants.
 
 ## Acceptance criteria
@@ -108,7 +105,7 @@ The server sends presenter list updates when a phone pairs, resumes, disconnects
 10. Temporary loss disables commands, preserves the phone's record and label, and reconnects without replaying earlier taps.
 11. A ninth phone is rejected with a session-full message until a slot is freed.
 12. Commands from separate phones are independently authenticated and deduplicated; each command acknowledgement goes only to its originating phone.
-13. The phone receives no slide content, PDF data, camera frames, or hand landmarks.
+13. Phones receive no slide content, PDF data, or rendered page images.
 14. Replacing the current single-phone policy does not expose the presenter workspace or broaden the listener's route allowlist.
 
 ## Validation approach
@@ -121,8 +118,8 @@ The server sends presenter list updates when a phone pairs, resumes, disconnects
 - Verify nickname bounds and sanitization, coarse device-type allowlisting, generic fallback labels, and that names are not persisted beyond the active session.
 - Verify the exact assigned label appears on its phone after pairing and after reconnect, including nickname and generated-label cases.
 - Retain route allowlist, trusted-origin, selected-interface, and presenter-loopback boundary checks.
-- Manually pair multiple phones on one trusted Wi-Fi network, reconnect after phone sleep or Wi-Fi interruption, remove devices individually, and reach the eight-phone limit.
-- Inspect network traffic to confirm phones receive only navigation state and that camera and presentation content stay on the presenter device.
+- Inspect network traffic to confirm phones receive only navigation state and pairing/session metadata.
+- Manually pair multiple phones on one trusted Wi-Fi network or reachable iPhone Personal Hotspot, reconnect after phone sleep or network interruption, remove devices individually, and reach the eight-phone limit.
 
 ## Alternatives considered
 
@@ -139,4 +136,4 @@ The server sends presenter list updates when a phone pairs, resumes, disconnects
 - First-time pairing waits for an explicit Connect action, while a returning phone resumes automatically.
 - The phone and presenter use the same assigned display label, including after reconnect.
 - The phone Disconnect action and presenter-wide stop have distinct, unambiguous effects.
-- The presenter remains the single source of truth, preserving the existing local PDF and camera data boundaries.
+- The presenter remains the source of truth, and slide/PDF content stays in its browser.

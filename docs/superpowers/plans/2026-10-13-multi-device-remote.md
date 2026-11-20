@@ -194,8 +194,6 @@ git commit -m "feat: route presenter controls to individual remote phones"
 
 - [ ] **Step 1: Add failing presenter UI tests**
 
-Extend the existing `presenter pairing stays camera independent and follows authenticated host lifecycle` test in `tests/app.test.js` with the device-list elements. Add `closest(selector)` to the test's `FakeElement` so delegated clicks can find a `data-phone-id` button. Test that a `phones` event renders names with `textContent`, shows connected/reconnecting status, sends an individual remove request for the selected ID, and leaves the QR and URL visible after the first or later phone pairs.
-
 ```js
 // In the existing presenter pairing test, after presenterReady and after
 // adding `paired-phones` to the element map:
@@ -331,8 +329,6 @@ Expected: PASS for all remote session, listener, presenter, phone, and host UI t
 - [ ] **Step 3: Run the repository regression suite and checks**
 
 Run: `npm test`
-
-Expected: all tests pass, including existing WebSocket, presentation, PDF, camera, and local-hand-tracker privacy tests.
 
 Run: `npm run check`
 

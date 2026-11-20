@@ -12,7 +12,6 @@ class FakeElement {
     this.value = '';
     this.hidden = false;
     this.disabled = false;
-    this.srcObject = null;
     this.children = [];
     this.open = false;
   }
@@ -135,12 +134,7 @@ async function createPairingHarness({
   };
   setGlobal('window', fakeWindow);
   setGlobal('location', locationState);
-  let cameraRequests = 0;
-  setGlobal('navigator', {
-    mediaDevices: { getUserMedia: async () => { cameraRequests += 1; throw new Error('Camera should remain off.'); } },
-    clipboard: { writeText: async () => {} },
-  });
-  setGlobal('localStorage', { getItem: () => '{}', setItem() {}, removeItem() {} });
+  setGlobal('navigator', { clipboard: { writeText: async () => {} } });
 
   const calls = [];
   let startCount = 0;
@@ -208,7 +202,6 @@ async function createPairingHarness({
     calls,
     RemoteSocket,
     remoteSockets,
-    get cameraRequests() { return cameraRequests; },
     restore() {
       for (const [name, descriptor] of originalGlobals) {
         if (descriptor) Object.defineProperty(globalThis, name, descriptor);
@@ -217,17 +210,6 @@ async function createPairingHarness({
     },
   };
 }
-
-test('workspace has no camera controls, capture copy, or camera module imports', async () => {
-  const html = await readFile(new URL('../workspace.html', import.meta.url), 'utf8');
-  const app = await readFile(new URL('../app.js', import.meta.url), 'utf8');
-  for (const id of [
-    'start-setup', 'start-session', 'pause-session', 'resume-session', 'camera-preview',
-    'camera-selection', 'camera-diagnostics', 'gesture-sensitivity', 'reverse-mapping',
-  ]) assert.doesNotMatch(html, new RegExp(`id="${id}"`));
-  assert.doesNotMatch(html, /camera|webcam|swipe|hand tracking/i);
-  assert.doesNotMatch(app, /camera-session|camera-preview|hand-tracking|local-hand-tracker|gesture-engine|getUserMedia/);
-});
 
 test('workspace keeps its sample deck, PDF, phone, and manual slide controls', async () => {
   const html = await readFile(new URL('../workspace.html', import.meta.url), 'utf8');
@@ -259,7 +241,7 @@ test('home and workspace copy names the current presentation flow', async () => 
   assert.match(css, /\.deck-choice-copy > span\s*\{[\s\S]*?color:\s*#696d64;/);
 });
 
-test('manual buttons and unoccupied arrow keys navigate without requesting camera access', async () => {
+test('manual buttons and unoccupied arrow keys navigate', async () => {
   const app = await createPairingHarness();
   try {
     const { elements, fakeDocument } = app;
@@ -272,18 +254,15 @@ test('manual buttons and unoccupied arrow keys navigate without requesting camer
       return prevented;
     };
     assert.equal(elements.get('slide-number').textContent, '01');
-    assert.equal(app.cameraRequests, 0);
     elements.get('sample-deck').dispatch('click');
     await new Promise((resolve) => setImmediate(resolve));
     elements.get('open-pdf').dispatch('click');
-    assert.equal(app.cameraRequests, 0);
     elements.get('next-slide').dispatch('click');
     assert.equal(elements.get('slide-number').textContent, '02');
     assert.equal(pressed('ArrowRight'), true);
     assert.equal(elements.get('slide-number').textContent, '03');
     assert.equal(pressed('ArrowLeft'), true);
     assert.equal(elements.get('slide-number').textContent, '02');
-    assert.equal(app.cameraRequests, 0);
   } finally {
     app.restore();
   }
@@ -299,7 +278,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
   assert.match(html, /<strong>Connect phone<\/strong>/);
   assert.doesNotMatch(html.match(/<button id="connect-phone"[^>]*>/)?.[0] ?? '', /hidden/);
   assert.match(html, /<dialog id="pairing-dialog"[^>]*aria-labelledby="pairing-title"/);
-  assert.match(html, /<label[^>]*for="pairing-interface"[^>]*>Private network interface/);
+  assert.match(html, /<label[^>]*for="pairing-interface"[^>]*>Laptop network interface/);
   assert.match(html, /<label[^>]*for="pairing-url"[^>]*>Pairing URL/);
   for (const label of ['Start phone connection', 'Copy pairing URL', 'Renew pairing link', 'Disconnect all', 'Close']) {
     assert.match(html, new RegExp(`>${label.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')}<`));
@@ -308,7 +287,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
   const harness = await createPairingHarness();
   const {
     elements, fakeDocument, windowListeners, extensionRequests, publishExtensionState,
-    calls, RemoteSocket, cameraRequests,
+    calls, RemoteSocket,
   } = harness;
   try {
     const connectButton = elements.get('connect-phone');
@@ -319,7 +298,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(fakeDocument.activeElement, elements.get('pairing-interface'));
     assert.deepEqual(calls.map(({ url }) => url), ['/api/mobile-remote/interfaces']);
     assert.deepEqual(elements.get('pairing-interface').children.map(({ value }) => value), ['', '192.168.1.20', '10.0.0.4']);
-    assert.equal(cameraRequests, 0);
     assert.equal(calls.some(({ url }) => url.endsWith('/start')), false);
 
     elements.get('pairing-interface').value = '192.168.1.20';
@@ -332,7 +310,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(elements.get('pairing-url-panel').hidden, true);
     assert.equal(elements.get('pairing-qr').src, '');
     assert.equal(elements.get('pairing-url').value, '');
-    assert.equal(cameraRequests, 0);
 
     const socket = RemoteSocket.instance;
     socket.open();
@@ -374,7 +351,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(elements.get('pairing-url').value, '');
     assert.equal(elements.get('new-pairing-link').hidden, true);
     assert.equal(elements.get('disconnect-phone').hidden, true);
-    assert.equal(cameraRequests, 0);
 
     const rejectionCases = [
       {
@@ -463,7 +439,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(pagehideSocket.readyState, 3);
     assert.equal(elements.get('pairing-url').value, '');
     assert.equal(elements.get('pairing-status').textContent, 'Disconnected');
-    assert.equal(cameraRequests, 0);
   } finally {
     harness.restore();
   }

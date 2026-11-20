@@ -593,7 +593,7 @@ async function loadPairingInterfaces() {
     if (!remoteActive && !remoteStarting) {
       setPairingStatus(addresses.length
         ? 'Disconnected'
-        : 'No private network interface is available. Connect this computer and your phone to the same local network.');
+        : 'No private network interface is available. Connect the laptop and phone to the same local network. iPhone Hotspot works only if the phone can reach the laptop.');
     }
   } catch (error) {
     elements.pairingInterface.disabled = true;

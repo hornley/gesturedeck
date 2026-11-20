@@ -64,15 +64,12 @@ test('development server exposes the Canva page bridge and protocol but keeps Ch
   }
 });
 
-test('development server exposes only the required PDF.js runtime assets', async () => {
+test('development server exposes only the required browser runtime assets', async () => {
   const server = createAppServer();
   try {
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const origin = `http://127.0.0.1:${server.address().port}`;
-
-    const mediapipe = await fetch(`${origin}/node_modules/@mediapipe/tasks-vision/vision_bundle.mjs`);
-    assert.equal(mediapipe.status, 404);
 
     for (const route of [
       '/node_modules/pdfjs-dist/build/pdf.mjs',
@@ -101,7 +98,7 @@ test('development server exposes app assets but not project documentation', asyn
   await mkdir(path.join(root, 'assets'));
   await writeFile(path.join(root, 'index.html'), '<h1>GestureDeck</h1>');
   await writeFile(path.join(root, 'spec.md'), 'private planning notes');
-  await writeFile(path.join(root, 'assets', 'hand.task'), 'model');
+  await writeFile(path.join(root, 'assets', 'fixture.bin'), 'asset');
   const server = createAppServer({ root });
 
   try {
@@ -111,9 +108,9 @@ test('development server exposes app assets but not project documentation', asyn
     const page = await fetch(`${origin}/`);
     assert.equal(page.status, 200);
     assert.match(await page.text(), /GestureDeck/);
-    const model = await fetch(`${origin}/assets/hand.task`);
-    assert.equal(model.status, 200);
-    assert.equal(await model.text(), 'model');
+    const asset = await fetch(`${origin}/assets/fixture.bin`);
+    assert.equal(asset.status, 200);
+    assert.equal(await asset.text(), 'asset');
     const notes = await fetch(`${origin}/spec.md`);
     assert.equal(notes.status, 404);
   } finally {

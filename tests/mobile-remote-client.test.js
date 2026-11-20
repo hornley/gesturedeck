@@ -47,7 +47,7 @@ test('authenticates first, then publishes only the latest sanitized state', () =
   socket.message({ type: 'presenterReady' });
   assert.deepEqual(events, [{ type: 'authenticated' }]);
   assert.deepEqual(socket.sent[1], { type: 'state', index: 2, total: 4, busy: true });
-  client.publishState({ index: 3, total: 4, busy: false, camera: 'private' });
+  client.publishState({ index: 3, total: 4, busy: false, extra: 'private' });
   assert.deepEqual(socket.sent[2], { type: 'state', index: 3, total: 4, busy: false });
   client.publishState({ index: -1, total: 4, busy: false });
   assert.equal(socket.sent.length, 3);

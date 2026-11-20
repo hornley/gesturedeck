@@ -18,7 +18,7 @@
 - `app.js` owns the cloud-mode replacement for the workspace hint and the existing unchanged `ArrowLeft`/`ArrowRight` handler.
 - `tests/app.test.js` owns static workspace markup, stylesheet, and app-source regression assertions.
 
-No extension, server, remote, PDF, camera, or README files need changes for this issue.
+No extension, server, remote, PDF, or README files need changes for this issue.
 
 ### Task 1: Add regression tests for the approved behavior
 
@@ -47,7 +47,6 @@ test('workspace copy names the current presentation flow', async () => {
   ]);
 
   assert.match(homeHtml, /<a class="local-link" href="\/workspace\.html">Presentation workspace<\/a>/);
-  assert.doesNotMatch(homeHtml, /Local gesture version/);
   assert.match(workspaceHtml, /<p class="welcome-description">Choose a deck, then present with the left and right arrow keys or your phone\.<\/p>/);
   assert.match(workspaceHtml, /<h2 id="session-heading">Set up your presentation<\/h2>/);
   assert.match(appSource, /setText\(document\.querySelector\('\.welcome-description'\), 'Choose a PDF, pair your phone, and present with the left and right arrow keys\.'\)/);
@@ -178,5 +177,5 @@ Expected: one commit containing the five implementation files, with the worktree
 - The tablet requirement maps to Task 1 Step 1 and Task 2 Step 1.
 - The contrast requirement maps to Task 1 Step 2 and Task 2 Step 2.
 - Static and cloud keyboard discoverability map to Task 1 Step 2 and Task 2 Steps 3–4.
-- Existing keyboard behavior and all remote/camera/PDF contracts are explicitly preserved in Task 2 Step 4 and Task 3 Step 3.
+- Existing keyboard behavior and all remote/PDF contracts are explicitly preserved in Task 2 Step 4 and Task 3 Step 3.
 - No placeholders or unbounded refactors remain in the plan.

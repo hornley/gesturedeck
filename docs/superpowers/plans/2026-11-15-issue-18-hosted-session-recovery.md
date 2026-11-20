@@ -10,8 +10,6 @@
 
 ---
 
-**Dependency:** Complete this plan before [camera removal and deployment cleanup](2026-11-15-issue-18-camera-removal-and-deploy-cleanup.md), because both plans update `app.js` and `tests/app.test.js`.
-
 ## Files and responsibilities
 
 - `src/cloud-remote-redis-server.js`: hosted session lease lifecycle, phone command admission, explicit stop route, and presenter event retention/polling.

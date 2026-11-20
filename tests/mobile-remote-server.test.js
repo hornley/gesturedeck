@@ -16,6 +16,11 @@ test('interface enumeration keeps only external RFC1918 IPv4 addresses', () => {
   assert.deepEqual(listPrivateInterfaces(interfaces), ['192.168.1.12', '10.0.0.3']);
 });
 
+test('interface enumeration accepts an iPhone Personal Hotspot address', () => {
+  const hotspot = () => ({ wifi: [{ address: '172.20.10.2', family: 'IPv4', internal: false }] });
+  assert.deepEqual(listPrivateInterfaces(hotspot), ['172.20.10.2']);
+});
+
 test('loopback API validates origin, host, JSON and address before opening a restricted listener', async () => {
   const root = await mkdtemp(path.join(process.env.TMPDIR ?? '/tmp', 'gesturedeck-remote-'));
   await mkdir(path.join(root, 'src'));
@@ -60,7 +65,7 @@ test('loopback API validates origin, host, JSON and address before opening a res
     for (const route of ['/remote', '/mobile-remote.css', '/src/mobile-remote-phone.js']) {
       assert.equal((await requestWithHost(listenerOrigin, route, `192.168.1.12:${remote.listener.address().port}`)).statusCode, 200, route);
     }
-    for (const route of ['/', '/app.js', '/assets/hand_landmarker.task', '/node_modules/pdfjs-dist/build/pdf.mjs', '/spec.md', '/remote?invite=x', '/x/../remote', '/mobile-remote.css?v=1']) {
+    for (const route of ['/', '/app.js', '/assets/unlisted.bin', '/node_modules/pdfjs-dist/build/pdf.mjs', '/README.md', '/remote?invite=x', '/x/../remote', '/mobile-remote.css?v=1']) {
       assert.equal((await requestWithHost(listenerOrigin, route, `192.168.1.12:${remote.listener.address().port}`)).statusCode, 404, route);
     }
     assert.equal((await requestWithHost(listenerOrigin, '/remote', `evil.test:${remote.listener.address().port}`)).statusCode, 403);
@@ -359,7 +364,7 @@ test('temporary listener serves three realpath-checked assets with exact phone W
       assert.equal(result.headers['x-content-type-options'], 'nosniff', route);
       assert.equal(result.headers['content-security-policy'], "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src ws://192.168.1.12:43123/ws/mobile-remote/phone; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'", route);
     }
-    for (const route of ['/', '/app.js', '/assets/hand_landmarker.task', '/node_modules/pdfjs-dist/build/pdf.mjs', '/spec.md', '/remote?invite=x', '/x/../remote', '/mobile-remote.css?v=1']) {
+    for (const route of ['/', '/app.js', '/assets/unlisted.bin', '/node_modules/pdfjs-dist/build/pdf.mjs', '/README.md', '/remote?invite=x', '/x/../remote', '/mobile-remote.css?v=1']) {
       assert.equal((await fakeAssetRequest(remote.listener, route)).status, 404, route);
     }
   } finally { await remote.close(); await rm(root, { recursive: true, force: true }); }
