@@ -16,6 +16,7 @@ class MemoryRedis {
     this.subscribers = new Map();
     this.streamOrdinal = 0;
     this.commandKeys = new Set();
+    this.commandLockTtls = new Map();
     this.setResults = [...setResults];
     this.setCalls = 0;
     this.presenterAuthResults = [...presenterAuthResults];
@@ -201,7 +202,13 @@ class MemoryRedis {
         && (session.state.target === 'canva' || Number(args[2]) >= session.state.total)) return 'out-of-range';
       const presenterConnectionId = this.values.get(keys[6]);
       if (!presenterConnectionId) return 'presenter-unavailable';
-      if (this.commandKeys.has(keys[1])) return 'duplicate';
+      if (this.values.has(keys[7])) return 'busy';
+      this.values.set(keys[7], args[7]);
+      this.commandLockTtls.set(keys[7], Number(args[6]));
+      if (this.commandKeys.has(keys[1])) {
+        if (this.values.get(keys[7]) === args[7]) this.values.delete(keys[7]);
+        return 'duplicate';
+      }
       this.commandKeys.add(keys[1]);
       const eventId = this.#publish(keys[2], null, JSON.parse(args[4]), 2000);
       this.#emit(keys[3], JSON.parse(args[4]), eventId, presenterConnectionId);
@@ -284,7 +291,14 @@ class MemoryRedis {
       const session = this.values.get(keys[0]);
       if (!session) return 'missing';
       if (!session.active) return 'ended';
-      this.#publish(keys[2], keys[3], JSON.parse(args[1]));
+      const acknowledgment = JSON.parse(args[1]);
+      if (acknowledgment.type === 'commandAck'
+        && typeof acknowledgment.phoneId === 'string'
+        && typeof acknowledgment.id === 'string') {
+        const owner = `${acknowledgment.phoneId}.${acknowledgment.id}`;
+        if (this.values.get(keys[4]) === owner) this.values.delete(keys[4]);
+      }
+      this.#publish(keys[2], keys[3], acknowledgment);
       return 'ok';
     }
 
@@ -383,8 +397,11 @@ test('presenter command and event streams retain exactly the newest 2,000 entrie
   for (let i = 0; i < 2001; i += 1) {
     const command = { type: 'command', id: `phone.${i}`, action: 'next' };
     assert.equal(await redis.eval(phoneCommandScript,
-      ['session', `dedupe-${i}`, 'phone-commands', 'phone-channel', 'phone-lease', 'legacy-lease', 'presenter-lease'],
-      ['phone-credential', 'next', '', '60', JSON.stringify(command), 'phone-lease-value']), 'ok');
+      ['session', `dedupe-${i}`, 'phone-commands', 'phone-channel', 'phone-lease', 'legacy-lease',
+        'presenter-lease', 'command-lock'],
+      ['phone-credential', 'next', '', '60', JSON.stringify(command), 'phone-lease-value', '20', command.id]), 'ok');
+    // Model an acknowledgment before appending the next command.
+    await redis.del('command-lock');
   }
   const commands = redis.streams.get('phone-commands').map(({ message }) => message);
   assert.equal(commands.length, 2000);
@@ -699,6 +716,49 @@ test('hosted Redis relay pairs multiple phones, broadcasts state, and routes ack
     type: 'commandAck', id: 'first-command', accepted: true,
   });
   assert.equal(second.peer.messages.some((message) => message.type === 'commandAck'), false);
+});
+
+test('hosted Redis relay allows one unacknowledged phone command per session', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => fixture.close());
+  const presenter = await fixture.presenter();
+  const first = await fixture.pairPhone(presenter);
+  const second = await fixture.pairPhone(presenter);
+
+  first.peer.send({ type: 'command', id: 'first-command', action: 'next' });
+  const firstCommand = await presenter.waitFor('command');
+  const lockKey = `gesturedeck:${fixture.pairing.sessionId}:command-lock`;
+  assert.equal(fixture.redis.commandLockTtls.get(lockKey), 20);
+  second.peer.send({ type: 'command', id: 'blocked-command', action: 'previous' });
+  assert.deepEqual(await second.peer.waitFor('commandAck'), {
+    type: 'commandAck', id: 'blocked-command', accepted: false,
+  });
+  assert.equal(presenter.received.filter(({ type }) => type === 'command').length, 1);
+
+  presenter.send({
+    type: 'commandAck', id: `${first.paired.phoneId}.unrelated`, accepted: true,
+  });
+  await first.peer.waitFor('commandAck', ({ id }) => id === 'unrelated');
+  second.peer.send({ type: 'command', id: 'still-blocked', action: 'next' });
+  assert.deepEqual(await second.peer.waitFor('commandAck', ({ id }) => id === 'still-blocked'), {
+    type: 'commandAck', id: 'still-blocked', accepted: false,
+  });
+
+  presenter.send({ type: 'commandAck', id: firstCommand.id, accepted: true });
+  assert.deepEqual(await first.peer.waitFor('commandAck', ({ id }) => id === 'first-command'), {
+    type: 'commandAck', id: 'first-command', accepted: true,
+  });
+  first.peer.send({ type: 'command', id: 'first-command', action: 'next' });
+  assert.deepEqual(await first.peer.waitFor('commandAck', ({ accepted }) => !accepted), {
+    type: 'commandAck', id: 'first-command', accepted: false,
+  });
+  second.peer.send({ type: 'command', id: 'blocked-command', action: 'next' });
+  const nextCommand = await presenter.waitFor('command', ({ id }) =>
+    id === `${second.paired.phoneId}.blocked-command`);
+  presenter.send({ type: 'commandAck', id: nextCommand.id, accepted: true });
+  assert.deepEqual(await second.peer.waitFor('commandAck', ({ accepted }) => accepted), {
+    type: 'commandAck', id: 'blocked-command', accepted: true,
+  });
 });
 
 test('hosted Redis relay rejects Canva commands until the target is ready', async (t) => {

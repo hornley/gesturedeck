@@ -203,7 +203,11 @@ if ARGV[2] == 'goTo' then
 end
 local presenterConnectionId = redis.call('GET', KEYS[7])
 if not presenterConnectionId then return 'presenter-unavailable' end
-if redis.call('SET', KEYS[2], 'pending', 'NX', 'EX', ARGV[4]) == false then return 'duplicate' end
+if redis.call('SET', KEYS[8], ARGV[8], 'NX', 'EX', ARGV[7]) == false then return 'busy' end
+if redis.call('SET', KEYS[2], 'pending', 'NX', 'EX', ARGV[4]) == false then
+  if redis.call('GET', KEYS[8]) == ARGV[8] then redis.call('DEL', KEYS[8]) end
+  return 'duplicate'
+end
 local eventId = redis.call('XADD', KEYS[3], 'MAXLEN', 2000, '*', 'data', ARGV[5])
 redis.call('EXPIRE', KEYS[3], ARGV[4])
 redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, targetConnectionId = presenterConnectionId,
@@ -342,9 +346,16 @@ local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing' end
 local session = cjson.decode(raw)
 if not session.active then return 'ended' end
+local acknowledgment = cjson.decode(ARGV[2])
+if acknowledgment.type == 'commandAck'
+  and type(acknowledgment.phoneId) == 'string'
+  and type(acknowledgment.id) == 'string' then
+  local owner = acknowledgment.phoneId .. '.' .. acknowledgment.id
+  if redis.call('GET', KEYS[5]) == owner then redis.call('DEL', KEYS[5]) end
+end
 local eventId = redis.call('XADD', KEYS[3], 'MAXLEN', '~', 2000, '*', 'data', ARGV[2])
 redis.call('EXPIRE', KEYS[3], ARGV[3])
-redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, message = cjson.decode(ARGV[2])}))
+redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, message = acknowledgment}))
 return 'ok'
 `;
 
@@ -963,7 +974,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
           const phoneCommandId = message.id.slice(separator + 1);
           if (!PHONE_ID_PATTERN.test(phoneId) || !phoneCommandId || phoneCommandId.length > 128) return;
           const published = await redis.eval(PRESENTER_ACK_SCRIPT,
-            [sessionKey, leaseKey, key(id, 'to-phone'), channelKey(id, 'phone')],
+            [sessionKey, leaseKey, key(id, 'to-phone'), channelKey(id, 'phone'), key(id, 'command-lock')],
             [connectionId, JSON.stringify({
               type: 'commandAck', id: phoneCommandId, accepted: message.accepted, phoneId,
             }), String(SESSION_TTL_SECONDS)]);
@@ -1141,7 +1152,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
           const result = await redis.eval(
             PHONE_COMMAND_SCRIPT,
             [sessionKey, dedupeKey, presenterEvents, channelKey(id, 'presenter'), leaseKey,
-              key(id, 'phone-lease'), key(id, 'presenter-lease')],
+              key(id, 'phone-lease'), key(id, 'presenter-lease'), key(id, 'command-lock')],
             [
               credential,
               message.action,
@@ -1149,6 +1160,8 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
               String(SESSION_TTL_SECONDS),
               JSON.stringify(command),
               connectionId,
+              String(LEASE_TTL_SECONDS),
+              presenterCommandId,
             ]);
           if (result !== 'ok') {
             socket.send({ type: 'commandAck', id: message.id, accepted: false });

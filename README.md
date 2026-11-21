@@ -21,6 +21,8 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173) to use the sample deck. Choo
 | Canva remote | Chrome extension, Canva Present/View tab, and either the local or hosted GestureDeck workspace | Previous/Next in the selected Canva tab |
 | Hosted remote | HTTPS GestureDeck deployment with Redis configured; devices may use different networks | Sample deck, PDF, or Canva on a supported workspace origin |
 
+Each presentation processes one phone command at a time. A tap received while another command awaits acknowledgment is rejected; retry after the current command completes.
+
 ### Use the local phone remote
 
 1. Turn on Personal Hotspot on the iPhone and connect the Mac or Windows laptop to it. Start GestureDeck on the laptop at `http://localhost:5173` or `http://127.0.0.1:5173`, then choose **Connect phone**.
