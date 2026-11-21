@@ -1,6 +1,8 @@
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import { startDesktopServer } from './server-lifecycle.mjs';
 
+const WORKSPACE_URL = 'http://127.0.0.1:5173/workspace.html';
+const WORKSPACE_ORIGIN = new URL(WORKSPACE_URL).origin;
 let lifecycle;
 let quitting = false;
 
@@ -15,14 +17,11 @@ async function openWorkspace() {
       sandbox: true,
     },
   });
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) void shell.openExternal(url);
-    return { action: 'deny' };
-  });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, url) => {
-    if (url !== 'http://127.0.0.1:5173/workspace.html') event.preventDefault();
+    if (new URL(url).origin !== WORKSPACE_ORIGIN) event.preventDefault();
   });
-  await window.loadURL('http://127.0.0.1:5173/workspace.html');
+  await window.loadURL(WORKSPACE_URL);
 }
 
 app.whenReady().then(openWorkspace).catch(async (error) => {
@@ -37,7 +36,7 @@ app.on('before-quit', (event) => {
   if (!lifecycle || quitting) return;
   event.preventDefault();
   quitting = true;
-  lifecycle.stop().finally(() => app.quit());
+  lifecycle.stop().catch(() => {}).finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => app.quit());

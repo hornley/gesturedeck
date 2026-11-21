@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import { once } from 'node:events';
 import { startDesktopServer } from '../desktop/server-lifecycle.mjs';
 
@@ -41,15 +42,15 @@ test('desktop server closes attached remotes when its port is occupied', async (
   }
 });
 
-test('desktop server closes both remotes before stopping HTTP', async () => {
+test('desktop server awaits both remotes before stopping HTTP and shares concurrent stops', async () => {
   const order = [];
   const lifecycle = await startDesktopServer({
     host: '127.0.0.1',
     port: 0,
     createServer() {
       const server = http.createServer();
-      server.cloudRemote = { close: async () => { order.push('cloud'); } };
-      server.mobileRemote = { close: async () => { order.push('mobile'); } };
+      server.cloudRemote = { close: async () => { await new Promise((resolve) => setTimeout(resolve, 10)); order.push('cloud'); } };
+      server.mobileRemote = { close: async () => { await new Promise((resolve) => setTimeout(resolve, 5)); order.push('mobile'); } };
       const close = server.close.bind(server);
       server.close = (...args) => {
         order.push('http');
@@ -59,6 +60,36 @@ test('desktop server closes both remotes before stopping HTTP', async () => {
     },
   });
 
+  const first = lifecycle.stop();
+  assert.equal(lifecycle.stop(), first);
+  await first;
+  assert.deepEqual(order.slice().sort(), ['cloud', 'http', 'mobile'].sort());
+  assert.equal(order.at(-1), 'http');
+});
+
+test('desktop server force-closes an incomplete HTTP request after the grace period', async () => {
+  const lifecycle = await startDesktopServer({ host: '127.0.0.1', port: 0 });
+  const socket = net.connect(lifecycle.port, '127.0.0.1');
+  await once(socket, 'connect');
+  socket.write('GET /workspace.html HTTP/1.1\r\nHost: 127.0.0.1\r\n');
+  const closed = once(socket, 'close');
   await lifecycle.stop();
-  assert.deepEqual(order, ['cloud', 'mobile', 'http']);
+  await closed;
+  assert.equal(lifecycle.server.listening, false);
+});
+
+test('desktop server stops HTTP even when a remote close rejects', async () => {
+  const lifecycle = await startDesktopServer({
+    host: '127.0.0.1',
+    port: 0,
+    createServer() {
+      const server = http.createServer();
+      server.cloudRemote = { close: async () => { throw new Error('remote close failed'); } };
+      server.mobileRemote = { close: async () => {} };
+      return server;
+    },
+  });
+
+  await assert.rejects(lifecycle.stop(), /shutdown failed/);
+  assert.equal(lifecycle.server.listening, false);
 });
