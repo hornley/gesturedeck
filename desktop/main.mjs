@@ -39,3 +39,5 @@ app.on('before-quit', (event) => {
   quitting = true;
   lifecycle.stop().finally(() => app.quit());
 });
+
+app.on('window-all-closed', () => app.quit());

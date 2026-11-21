@@ -40,3 +40,25 @@ test('desktop server closes attached remotes when its port is occupied', async (
     await new Promise((resolve) => occupied.close(resolve));
   }
 });
+
+test('desktop server closes both remotes before stopping HTTP', async () => {
+  const order = [];
+  const lifecycle = await startDesktopServer({
+    host: '127.0.0.1',
+    port: 0,
+    createServer() {
+      const server = http.createServer();
+      server.cloudRemote = { close: async () => { order.push('cloud'); } };
+      server.mobileRemote = { close: async () => { order.push('mobile'); } };
+      const close = server.close.bind(server);
+      server.close = (...args) => {
+        order.push('http');
+        return close(...args);
+      };
+      return server;
+    },
+  });
+
+  await lifecycle.stop();
+  assert.deepEqual(order, ['cloud', 'mobile', 'http']);
+});
