@@ -83,6 +83,17 @@ open dist/macos/GestureDeck.app
 
 The app bundles its Node runtime, so running it does not require Terminal or a separate Node installation. It supports the sample deck, local PDF presentation, and local phone remote. Canva control remains in Chrome with the extension. Phone pairing requires a trusted network the phone can reach; local phone traffic is unencrypted unless tunneled through a service such as Tailscale. The initial build is unsigned and does not include a DMG, notarization, or Intel Mac support.
 
+## Windows app (x64)
+
+The portable x64 `.exe` opens its own window and does not require Node.js to run. Download `GestureDeck-Windows-x64` from a successful Windows portable app run in GitHub Actions, or build it on Windows with Node.js 22:
+
+```sh
+npm ci
+npm run build:windows
+```
+
+The app is written to `dist/windows/`. It uses port `5173` and shows an error if that port is already occupied. In Windows Firewall, allow GestureDeck only on **Private networks**. If an iPhone hotspot is classified as Public, mark it Private only if you trust it; otherwise use trusted Wi-Fi or Tailscale. Do not enable the Public profile. On a reachable trusted network, scan the app's QR link with your phone to control the sample deck or a PDF. Canva control still requires Chrome and the extension. Windows may warn on first run because the app is unsigned. Real iPhone hotspot pairing has not been verified.
+
 ## Project layout
 
 - `app.js`, `index.html`, and `workspace.html`: browser UI and page orchestration.
