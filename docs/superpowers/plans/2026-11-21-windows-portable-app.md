@@ -6,7 +6,7 @@
 
 **Architecture:** Electron starts the existing Node server on `0.0.0.0:5173`, then loads the workspace from `127.0.0.1:5173`. The desktop process closes the mobile and cloud listeners on quit. Use an unpacked app directory so `server.mjs`'s realpath checks continue to inspect normal files. electron-builder creates the portable executable on a Windows CI runner and uploads it as an artifact.
 
-**Tech Stack:** Electron, electron-builder, Node.js 20, GitHub Actions, `node:test`.
+**Tech Stack:** Electron, electron-builder, Node.js 20 project checks, Node.js 22 Windows packaging, GitHub Actions, `node:test`.
 
 ---
 
@@ -190,7 +190,7 @@ Expected: package metadata and lockfile contain the two development dependencies
 
 - [ ] **Step 2: Add the Windows build workflow**
 
-Create `.github/workflows/windows-app.yml` with `pull_request` targeting `main` and `workflow_dispatch` triggers. On `windows-latest`, check out the code, install Node.js 20, run `npm ci`, run `npm run build:windows`, launch the packaged `.exe`, confirm it serves `/workspace.html`, close it and confirm port 5173 is released, then upload the versioned `.exe` using `actions/upload-artifact@v4`. Fail if launch, shutdown, or artifact upload fails.
+Create `.github/workflows/windows-app.yml` with `pull_request` targeting `main` and `workflow_dispatch` triggers. On `windows-latest`, check out the code, install Node.js 22 (Electron 45 requires 22.12 or newer to build), run `npm ci`, run `npm run build:windows`, launch the packaged `.exe`, confirm it serves `/workspace.html`, close it and confirm port 5173 is released, then upload the versioned `.exe` using `actions/upload-artifact@v4`. Fail if launch, shutdown, or artifact upload fails. Leave the existing Node.js 20 test workflow unchanged.
 
 ```yaml
 name: Windows portable app
@@ -210,7 +210,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build:windows
@@ -268,7 +268,7 @@ Include these user instructions:
 ```markdown
 ## Windows portable app (x64)
 
-The portable `.exe` opens GestureDeck in its own window; you do not need to install Node.js. Download the `GestureDeck-Windows-x64` artifact from a successful **Windows portable app** Actions run, or build it on Windows with `npm ci` and `npm run build:windows`; the file is written to `dist/windows/`.
+The portable `.exe` opens GestureDeck in its own window; you do not need to install Node.js. Download the `GestureDeck-Windows-x64` artifact from a successful **Windows portable app** Actions run, or build it on Windows with Node.js 22 and `npm ci` followed by `npm run build:windows`; the file is written to `dist/windows/`.
 
 The app uses local port 5173. If another app is already using it, close that app before launching GestureDeck. When Windows Firewall asks, allow GestureDeck on a private network so a phone on the same Wi-Fi or hotspot can reach the remote. Physical iPhone hotspot pairing has not been verified. Canva control still needs Chrome and the GestureDeck extension.
 ```

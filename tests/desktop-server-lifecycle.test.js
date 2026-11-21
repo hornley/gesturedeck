@@ -67,9 +67,13 @@ test('desktop server awaits both remotes before stopping HTTP and shares concurr
   assert.equal(order.at(-1), 'http');
 });
 
-test('desktop server force-closes an incomplete HTTP request after the grace period', async () => {
+test('desktop server force-closes an incomplete HTTP request after the grace period', { timeout: 2_000 }, async (t) => {
   const lifecycle = await startDesktopServer({ host: '127.0.0.1', port: 0 });
   const socket = net.connect(lifecycle.port, '127.0.0.1');
+  t.after(() => {
+    socket.destroy();
+    lifecycle.server.closeAllConnections();
+  });
   await once(socket, 'connect');
   socket.write('GET /workspace.html HTTP/1.1\r\nHost: 127.0.0.1\r\n');
   const closed = once(socket, 'close');

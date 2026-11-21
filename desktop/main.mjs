@@ -36,7 +36,7 @@ app.on('before-quit', (event) => {
   if (!lifecycle || quitting) return;
   event.preventDefault();
   quitting = true;
-  lifecycle.stop().catch(() => {}).finally(() => app.quit());
+  lifecycle.stop().catch((error) => console.error('GestureDeck shutdown failed:', error)).finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => app.quit());
