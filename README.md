@@ -21,6 +21,8 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173) to use the sample deck. Choo
 | Canva remote | Chrome extension, Canva Present/View tab, and either the local or hosted GestureDeck workspace | Previous/Next in the selected Canva tab |
 | Hosted remote | HTTPS GestureDeck deployment with Redis configured; devices may use different networks | Sample deck, PDF, or Canva on a supported workspace origin |
 
+Each presentation processes one phone command at a time. A tap received while another command awaits acknowledgment is rejected; retry after the current command completes.
+
 ### Use the local phone remote
 
 1. Turn on Personal Hotspot on the iPhone and connect the Mac or Windows laptop to it. Start GestureDeck on the laptop at `http://localhost:5173` or `http://127.0.0.1:5173`, then choose **Connect phone**.
@@ -28,8 +30,6 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173) to use the sample deck. Choo
 3. Scan the QR code with the iPhone or open its fallback URL. This works only if the iPhone can reach the laptop over the hotspot; some hotspot setups may block that connection. Use the hosted remote if the link does not open.
 4. Up to eight phones can join. The invite lasts five minutes; renewing it keeps already paired phones connected.
 5. Use **Previous** and **Next** on a phone. The numbered picker is available for the sample deck and PDFs. Canva exposes Previous/Next only.
-
-Each presentation processes one phone command at a time. A tap received while another command awaits acknowledgment is rejected; retry after the current command completes.
 
 The presenter can remove one phone or disconnect everyone. Each phone can disconnect itself and reconnect after a brief Wi-Fi drop. The temporary phone listener closes when the presenter ends the connection. Phones receive control state, not slide content, PDF files, or filenames. Local HTTP and WebSocket traffic is unencrypted outside a tunnel such as Tailscale, so pair only on a trusted network.
 
