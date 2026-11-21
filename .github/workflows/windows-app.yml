@@ -25,6 +25,7 @@ jobs:
           $app = Get-ChildItem dist/windows/GestureDeck-*-portable-x64.exe | Select-Object -First 1
           if (-not $app) { throw 'Portable executable was not produced.' }
           $process = Start-Process -FilePath $app.FullName -PassThru
+          $windowProcess = $null
           try {
             $ready = $false
             for ($i = 0; $i -lt 60; $i++) {
@@ -34,8 +35,23 @@ jobs:
               } catch { Start-Sleep -Seconds 1 }
             }
             if (-not $ready) { throw 'Packaged app did not serve workspace.html with HTTP 200.' }
+            for ($i = 0; $i -lt 15 -and -not $windowProcess; $i++) {
+              $windowProcess = Get-Process -Name GestureDeck -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+              if (-not $windowProcess) { Start-Sleep -Seconds 1 }
+            }
+            if (-not $windowProcess) { throw 'Packaged app did not open a GestureDeck window.' }
+            $windowProcess.CloseMainWindow() | Out-Null
+            if (-not $windowProcess.WaitForExit(10000)) { throw 'GestureDeck window did not close normally.' }
+            if (-not $process.WaitForExit(10000)) { throw 'Portable launcher did not exit after GestureDeck closed.' }
           } finally {
-            & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
+            if (-not $windowProcess) {
+              $windowProcess = Get-Process -Name GestureDeck -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+            }
+            if ($windowProcess -and -not $windowProcess.HasExited) {
+              $windowProcess.CloseMainWindow() | Out-Null
+              if (-not $windowProcess.WaitForExit(10000)) { throw 'GestureDeck window did not close normally.' }
+            }
+            if (-not $process.HasExited -and -not $process.WaitForExit(10000)) { throw 'Portable launcher did not exit.' }
           }
           $released = $false
           for ($i = 0; $i -lt 30; $i++) {
