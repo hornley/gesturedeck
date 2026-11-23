@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { EventEmitter, once } from 'node:events';
 import WebSocket from 'ws';
-import { attachRedisCloudRemote } from '../src/cloud-remote-redis-server.js';
+import { attachRedisCloudRemote, REDIS_SCRIPTS } from '../src/cloud-remote-redis-server.js';
 
 const ORIGIN = 'https://gesturedeck.test';
 const HOST = 'gesturedeck.test';
+
+const operationByScript = new Map(
+  Object.entries(REDIS_SCRIPTS).map(([operation, source]) => [source, operation]),
+);
+assert.equal(operationByScript.size, Object.keys(REDIS_SCRIPTS).length,
+  'Redis script source identifies one operation');
 
 class MemoryRedis {
   constructor() {
@@ -53,7 +59,7 @@ class MemoryRedis {
   }
 
   async eval(script, keys, args) {
-    const operation = script.match(/REDIS_OP:([A-Z_]+)/)?.[1];
+    const operation = operationByScript.get(script);
     if (operation === 'CREATE_SESSION') {
       const now = Date.now();
       const members = this.sortedSets.get(keys[1]) ?? new Map();
