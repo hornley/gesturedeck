@@ -19,8 +19,8 @@ const PHONE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const DEVICE_TYPES = new Set(['iphone', 'android-phone', 'phone']);
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-const PRESENTER_AUTH_SCRIPT = `
--- REDIS_OP:PRESENTER_AUTH
+export const REDIS_SCRIPTS = Object.freeze({
+  PRESENTER_AUTH: `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing' end
 local session = cjson.decode(raw)
@@ -33,10 +33,8 @@ local eventId = redis.call('XADD', KEYS[3], 'MAXLEN', '~', 2000, '*', 'data', cj
 redis.call('EXPIRE', KEYS[3], ARGV[4])
 redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, message = message}))
 return cjson.encode(session.state)
-`;
-
-const RENEW_INVITE_SCRIPT = `
--- REDIS_OP:RENEW_INVITE
+`,
+  RENEW_INVITE: `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'unavailable' end
 local session = cjson.decode(raw)
@@ -52,10 +50,8 @@ session.inviteExpiredNotified = false
 redis.call('SET', KEYS[1], cjson.encode(session), 'PXAT', string.format('%.0f', expiresAt))
 return cjson.encode({origin = session.origin, invite = session.invite,
   inviteExpiresAt = session.inviteExpiresAt})
-`;
-
-const PHONE_PAIR_SCRIPT = `
--- REDIS_OP:PHONE_PAIR
+`,
+  PHONE_PAIR: `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing' end
 local session = cjson.decode(raw)
@@ -111,10 +107,8 @@ session.phoneDeviceType = nil
 redis.call('SET', KEYS[1], cjson.encode(session), 'EX', sessionTtl)
 redis.call('SET', KEYS[3], ARGV[4], 'EX', ARGV[6])
 return cjson.encode({state = session.state, phoneId = ARGV[7], label = label, deviceType = deviceType})
-`;
-
-const PHONE_RESUME_SCRIPT = `
--- REDIS_OP:PHONE_RESUME
+`,
+  PHONE_RESUME: `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing' end
 local session = cjson.decode(raw)
@@ -146,10 +140,8 @@ local cursor = '0-0'
 if latest[1] then cursor = latest[1][1] end
 return cjson.encode({state = session.state, phoneId = phoneId,
   label = phone.label or 'Phone', deviceType = phone.deviceType or 'phone', cursor = cursor})
-`;
-
-const PHONE_COMMAND_SCRIPT = `
--- REDIS_OP:PHONE_COMMAND
+`,
+  PHONE_COMMAND: `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'invalid' end
 local session = cjson.decode(raw)
@@ -178,10 +170,8 @@ if ARGV[6] == '1' then
   redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, message = cjson.decode(ARGV[5])}))
 end
 return 'ok'
-`;
-
-const REMOVE_PHONE_SCRIPT = `
--- REDIS_OP:REMOVE_PHONE
+`,
+  REMOVE_PHONE: `
 if ARGV[6] ~= '' and redis.call('GET', KEYS[3]) ~= ARGV[6] then return 'replaced' end
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing-session' end
@@ -262,11 +252,8 @@ if ARGV[6] ~= '' then
     .. ',"message":' .. listMessage .. '}')
 end
 return 'removed'
-`;
-
-const CREATE_SESSION_SCRIPT = `
--- REDIS_OP:CREATE_SESSION
--- shortcut: sessions created before this index shipped are not backfilled; seed them if rollout needs an immediate hard cap.
+`,
+  CREATE_SESSION: `
 local redisTime = redis.call('TIME')
 local now = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
 local expiresAt = now + tonumber(ARGV[2]) * 1000
@@ -278,10 +265,8 @@ local stored = redis.call('SET', KEYS[1], cjson.encode(session), 'NX', 'PXAT', s
 if not stored then return 'collision' end
 redis.call('ZADD', KEYS[2], expiresAt, ARGV[4])
 return tostring(expiresAt)
-`;
-
-const END_SESSION_SCRIPT = `
--- REDIS_OP:END_SESSION
+`,
+  END_SESSION: `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 0 end
 local session = cjson.decode(raw)
@@ -295,14 +280,11 @@ end
 if session.phoneCredential and session.phoneCredential ~= cjson.null then redis.call('DEL', KEYS[2]) end
 session.phoneCredential = nil
 session.phoneId = nil
--- shortcut: inactive session records keep their existing four-hour TTL; add churn controls if storage also needs a hard bound.
 redis.call('ZREM', KEYS[3], ARGV[3])
 redis.call('SET', KEYS[1], cjson.encode(session), 'EX', ARGV[2])
 return 1
-`;
-
-const UPDATE_STATE_SCRIPT = `
--- REDIS_OP:UPDATE_STATE
+`,
+  UPDATE_STATE: `
 if redis.call('GET', KEYS[2]) ~= ARGV[3] then return 'replaced' end
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing' end
@@ -320,10 +302,8 @@ local eventId = redis.call('XADD', KEYS[3], 'MAXLEN', '~', 2000, '*', 'data', en
 redis.call('EXPIRE', KEYS[3], ARGV[4])
 redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, message = message}))
 return 'ok'
-`;
-
-const PRESENTER_ACK_SCRIPT = `
--- REDIS_OP:PRESENTER_ACK
+`,
+  PRESENTER_ACK: `
 if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 'replaced' end
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing' end
@@ -333,10 +313,8 @@ local eventId = redis.call('XADD', KEYS[3], 'MAXLEN', '~', 2000, '*', 'data', AR
 redis.call('EXPIRE', KEYS[3], ARGV[3])
 redis.call('PUBLISH', KEYS[4], cjson.encode({eventId = eventId, message = cjson.decode(ARGV[2])}))
 return 'ok'
-`;
-
-const PRESENTER_EVENT_SCRIPT = `
--- REDIS_OP:PRESENTER_EVENT
+`,
+  PRESENTER_EVENT: `
 if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 'replaced' end
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 'missing' end
@@ -344,10 +322,8 @@ local session = cjson.decode(raw)
 if not session.active then return 'ended' end
 redis.call('PUBLISH', KEYS[3], cjson.encode({eventId = ARGV[3], message = cjson.decode(ARGV[2])}))
 return 'ok'
-`;
-
-const POLL_SESSION_SCRIPT = `
--- REDIS_OP:POLL_SESSION
+`,
+  POLL_SESSION: `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return {'missing'} end
 local session = cjson.decode(raw)
@@ -364,18 +340,14 @@ if ARGV[5] == '1' and session.inviteExpiresAt > 0
 end
 local events = redis.call('XREAD', 'COUNT', 100, 'STREAMS', KEYS[3], ARGV[4])
 return {'ok', cjson.encode(session), cjson.encode(events or {}), inviteExpired}
-`;
-
-const PUBLISH_EVENT_SCRIPT = `
--- REDIS_OP:PUBLISH_EVENT
+`,
+  PUBLISH_EVENT: `
 local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', 2000, '*', 'data', ARGV[1])
 redis.call('EXPIRE', KEYS[1], ARGV[2])
 redis.call('PUBLISH', KEYS[2], cjson.encode({eventId = id, message = cjson.decode(ARGV[1])}))
 return id
-`;
-
-const RELEASE_PRESENTER_SCRIPT = `
--- REDIS_OP:RELEASE_PRESENTER
+`,
+  RELEASE_PRESENTER: `
 if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 0 end
@@ -386,13 +358,12 @@ redis.call('ZREM', KEYS[3], ARGV[3])
 session.active = false
 redis.call('SET', KEYS[1], cjson.encode(session), 'EX', ARGV[2])
 return 1
-`;
-
-const RELEASE_PHONE_SCRIPT = `
--- REDIS_OP:RELEASE_PHONE
+`,
+  RELEASE_PHONE: `
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0
-`;
+`,
+});
 
 function makeRedis(env = process.env) {
   const url = env.UPSTASH_REDIS_REST_URL ?? env.KV_REST_API_URL;
@@ -519,7 +490,7 @@ function channelKey(id, role) { return key(id, `${role}-events`); }
 function token(bytes = 24) { return randomBytes(bytes).toString('base64url'); }
 
 async function publish(redis, streamKey, eventChannel, message) {
-  await redis.eval(PUBLISH_EVENT_SCRIPT, [streamKey, eventChannel], [JSON.stringify(message), String(SESSION_TTL_SECONDS)]);
+  await redis.eval(REDIS_SCRIPTS.PUBLISH_EVENT, [streamKey, eventChannel], [JSON.stringify(message), String(SESSION_TTL_SECONDS)]);
 }
 
 function eventsFromStreamResult(streams, cursor) {
@@ -580,7 +551,7 @@ function readEventEnvelope(value) {
 }
 
 async function pollSession(redis, { sessionKey, leaseKey, streamKey, connectionId, cursor, notifyInviteExpired = false }) {
-  const result = await redis.eval(POLL_SESSION_SCRIPT, [sessionKey, leaseKey, streamKey], [
+  const result = await redis.eval(REDIS_SCRIPTS.POLL_SESSION, [sessionKey, leaseKey, streamKey], [
     connectionId,
     String(LEASE_TTL_SECONDS),
     String(Date.now()),
@@ -814,7 +785,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
       socket.send(message);
     };
 
-    const publishOwnedPresenterEvent = (message) => redis.eval(PRESENTER_EVENT_SCRIPT,
+    const publishOwnedPresenterEvent = (message) => redis.eval(REDIS_SCRIPTS.PRESENTER_EVENT,
       [sessionKey, leaseKey, channelKey(id, 'presenter')],
       [connectionId, JSON.stringify(message), token(12)]);
     const closeForPresenterStatus = (status) => {
@@ -838,7 +809,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
       sockets.delete(socket);
       if (authenticated) {
         clearLocalPeer(id, 'presenter', socket);
-        const released = await redis.eval(RELEASE_PRESENTER_SCRIPT, [sessionKey, leaseKey, capacityKey],
+        const released = await redis.eval(REDIS_SCRIPTS.RELEASE_PRESENTER, [sessionKey, leaseKey, capacityKey],
           [connectionId, String(SESSION_TTL_SECONDS), id]).catch(() => 0);
         if (Number(released)) await broadcastToPhones(id, { type: 'sessionEnded' }).catch(() => {});
       }
@@ -876,7 +847,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         if (!authenticated) {
           if (Object.keys(message).sort().join(',') !== 'credential,type' || message.type !== 'presenter'
             || typeof message.credential !== 'string') { socket.close(1008, 'Invalid credential'); return; }
-          const result = await redis.eval(PRESENTER_AUTH_SCRIPT,
+          const result = await redis.eval(REDIS_SCRIPTS.PRESENTER_AUTH,
             [sessionKey, leaseKey, key(id, 'to-phone'), channelKey(id, 'phone')],
             [message.credential, connectionId, String(LEASE_TTL_SECONDS), String(SESSION_TTL_SECONDS)]);
           const initialState = stateFromScriptResult(result);
@@ -903,7 +874,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         if (message.type === 'state') {
           const state = sanitizeState(message);
           if (!state) return;
-          const updated = await redis.eval(UPDATE_STATE_SCRIPT,
+          const updated = await redis.eval(REDIS_SCRIPTS.UPDATE_STATE,
             [sessionKey, leaseKey, key(id, 'to-phone'), channelKey(id, 'phone')],
             [JSON.stringify(state), String(Date.now()), connectionId, String(SESSION_TTL_SECONDS)]);
           if (closeForPresenterStatus(updated)) return;
@@ -913,7 +884,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
           const phoneId = message.id.slice(0, separator);
           const phoneCommandId = message.id.slice(separator + 1);
           if (!PHONE_ID_PATTERN.test(phoneId) || !phoneCommandId || phoneCommandId.length > 128) return;
-          const published = await redis.eval(PRESENTER_ACK_SCRIPT,
+          const published = await redis.eval(REDIS_SCRIPTS.PRESENTER_ACK,
             [sessionKey, leaseKey, key(id, 'to-phone'), channelKey(id, 'phone')],
             [connectionId, JSON.stringify({
               type: 'commandAck', id: phoneCommandId, accepted: message.accepted, phoneId,
@@ -922,7 +893,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         } else if (message.type === 'removePhone'
           && Object.keys(message).sort().join(',') === 'phoneId,type'
           && typeof message.phoneId === 'string' && PHONE_ID_PATTERN.test(message.phoneId)) {
-          const removed = await redis.eval(REMOVE_PHONE_SCRIPT,
+          const removed = await redis.eval(REDIS_SCRIPTS.REMOVE_PHONE,
             [sessionKey, key(id, 'phone-lease'), leaseKey,
               key(id, 'to-phone'), channelKey(id, 'phone'),
               channelKey(id, 'presenter')],
@@ -974,7 +945,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
       if (admitted) {
         clearLocalPeer(id, 'phone', socket, phoneId);
         await pendingDisconnect?.catch(() => {});
-        const released = await redis.eval(RELEASE_PHONE_SCRIPT, [leaseKey], [connectionId]).catch(() => 0);
+        const released = await redis.eval(REDIS_SCRIPTS.RELEASE_PHONE, [leaseKey], [connectionId]).catch(() => 0);
         if (Number(released)) await publishPhoneList(id).catch(() => {});
       }
     };
@@ -1015,7 +986,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
             credential = token();
             const candidatePhoneId = token(12);
             leaseKey = key(id, `phone-lease:${credential}`);
-            const raw = await redis.eval(PHONE_PAIR_SCRIPT,
+            const raw = await redis.eval(REDIS_SCRIPTS.PHONE_PAIR,
               [sessionKey, key(id, 'presenter-lease'), leaseKey],
               [message.invite, credential, String(Date.now()), connectionId,
                 String(SESSION_TTL_SECONDS), String(LEASE_TTL_SECONDS), candidatePhoneId,
@@ -1048,7 +1019,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
           if (message.type === 'resume' && Object.keys(message).sort().join(',') === 'credential,type' && typeof message.credential === 'string') {
             credential = message.credential;
             leaseKey = key(id, `phone-lease:${credential}`);
-            const resumeResult = objectFromScriptResult(await redis.eval(PHONE_RESUME_SCRIPT,
+            const resumeResult = objectFromScriptResult(await redis.eval(REDIS_SCRIPTS.PHONE_RESUME,
               [sessionKey, leaseKey, key(id, 'phone-lease'), phoneEvents],
               [credential, connectionId, String(LEASE_TTL_SECONDS), String(Date.now())]));
             const identity = phoneIdentityFromScriptResult(resumeResult);
@@ -1093,7 +1064,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
           const dedupeKey = key(id, `command:${phoneId}:${message.id}`);
           const localPresenter = localSessions.get(id)?.presenter;
           const result = await redis.eval(
-            PHONE_COMMAND_SCRIPT,
+            REDIS_SCRIPTS.PHONE_COMMAND,
             [sessionKey, dedupeKey, presenterEvents, channelKey(id, 'presenter'), leaseKey, key(id, 'phone-lease')],
             [
               credential,
@@ -1114,7 +1085,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         } else if (message.type === 'disconnect') {
           if (!pendingDisconnect) {
             pendingDisconnect = (async () => {
-              const removed = await redis.eval(REMOVE_PHONE_SCRIPT,
+              const removed = await redis.eval(REDIS_SCRIPTS.REMOVE_PHONE,
                 [sessionKey, key(id, 'phone-lease'), key(id, 'presenter-lease')],
                 [phoneId, credential, key(id, 'phone-lease:'), String(Date.now()), connectionId, '',
                   String(SESSION_TTL_SECONDS)]);
@@ -1132,7 +1103,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
   }
 
   async function endSession(client, id, sessionKey) {
-    const ended = await client.eval(END_SESSION_SCRIPT,
+    const ended = await client.eval(REDIS_SCRIPTS.END_SESSION,
       [sessionKey, key(id, 'phone-lease'), capacityKey],
       [key(id, 'phone-lease:'), String(SESSION_TTL_SECONDS), id]);
     if (!Number(ended)) return false;
@@ -1180,7 +1151,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         const pairingUrl = new URL(`/r/${id}`, origin.origin);
         pairingUrl.hash = invite;
         const qrDataUrl = createQrDataUrl(pairingUrl.href);
-        const created = await redis.eval(CREATE_SESSION_SCRIPT, [key(id), capacityKey], [
+        const created = await redis.eval(REDIS_SCRIPTS.CREATE_SESSION, [key(id), capacityKey], [
           JSON.stringify(session), String(SESSION_TTL_SECONDS), String(MAX_SESSIONS), id,
         ]);
         if (created === 'capacity-reached') {
@@ -1213,7 +1184,7 @@ export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketF
         return;
       }
       const invite = token();
-      const renewed = objectFromScriptResult(await redis.eval(RENEW_INVITE_SCRIPT, [sessionKey], [
+      const renewed = objectFromScriptResult(await redis.eval(REDIS_SCRIPTS.RENEW_INVITE, [sessionKey], [
         body.hostCredential,
         new URL(request.headers.origin).origin,
         invite,

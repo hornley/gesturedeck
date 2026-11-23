@@ -112,7 +112,6 @@ let remoteStarting = false;
 let remoteAuthenticated = false;
 let presenterConnectionRejected = false;
 let remoteGeneration = 0;
-// Keep stop requests distinct across replacements and coalesce duplicates for one session.
 let activeRemoteSessionKey = 0;
 let remoteStopPromise = null;
 const remoteStopRequests = new Map();
@@ -692,7 +691,6 @@ async function startMobileRemote() {
     });
     serverStarted = true;
     if (generation !== remoteGeneration) {
-      // stopMobileRemote already queued cleanup when it invalidated this start.
       return;
     }
     if (typeof result.hostCredential !== 'string' || !result.hostCredential
