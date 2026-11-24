@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 class Element {
   constructor(tag = 'div') {
@@ -16,7 +17,13 @@ class Element {
   addEventListener(type, callback) { this.listeners.set(type, callback); }
 }
 
-test('dashboard sends the API logout contract and renders both daily funnel metrics', async () => {
+test('dashboard headers align with daily metrics and sends the API logout contract', async () => {
+  const html = await readFile(new URL('../analytics.html', import.meta.url), 'utf8');
+  const headers = [...html.matchAll(/<th scope="col">([^<]+)<\/th>/g)].map(([, label]) => label);
+  assert.deepEqual(headers, [
+    'Date', 'PDF imports', 'Phone sessions', 'PDF and phone sessions',
+    'Phone navigation sessions', 'Completed presentations', 'Presentation time',
+  ]);
   const ids = ['login-panel', 'login-form', 'password', 'dashboard', 'range', 'totals', 'daily-rows', 'status', 'logout'];
   const elements = new Map(ids.map((id) => [`#${id}`, new Element()]));
   const calls = [];
@@ -53,7 +60,9 @@ test('dashboard sends the API logout contract and renders both daily funnel metr
     await new Promise((resolve) => setImmediate(resolve));
 
     const cells = elements.get('#daily-rows').children[0].children;
-    assert.deepEqual(cells.slice(3, 5).map((cell) => cell.textContent), ['2', '1']);
+    const values = cells.map((cell) => cell.textContent);
+    assert.equal(headers.length, values.length);
+    assert.deepEqual(values, ['2026-11-25', '3', '4', '2', '1', '0', '0 min']);
 
     await elements.get('#logout').listeners.get('click')();
     const logoutCall = calls.find(({ url }) => url === '/api/usage-analytics/logout');
