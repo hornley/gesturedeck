@@ -8,6 +8,7 @@ const dailyRows = document.querySelector('#daily-rows');
 const status = document.querySelector('#status');
 const logoutButton = document.querySelector('#logout');
 const numberFormat = new Intl.NumberFormat();
+let summaryRequestGeneration = 0;
 
 function setStatus(message) {
   status.textContent = message;
@@ -43,11 +44,13 @@ function showLogin() {
 }
 
 async function loadSummary() {
+  const requestGeneration = ++summaryRequestGeneration;
   setStatus('Loading usage summary…');
   try {
     const response = await fetch(`/api/usage-analytics/summary?days=${encodeURIComponent(rangeSelect.value)}`, {
       credentials: 'same-origin',
     });
+    if (requestGeneration !== summaryRequestGeneration) return;
     if (response.status === 401) {
       showLogin();
       setStatus('Sign in to view usage analytics.');
@@ -55,6 +58,7 @@ async function loadSummary() {
     }
     if (!response.ok) throw new Error('Unable to load summary');
     const summary = await response.json();
+    if (requestGeneration !== summaryRequestGeneration) return;
     const { totals: data, daily } = summary;
     totals.replaceChildren(
       metric('PDF imports', data.pdfImports),
@@ -80,6 +84,7 @@ async function loadSummary() {
     showDashboard();
     setStatus('Usage summary updated.');
   } catch {
+    if (requestGeneration !== summaryRequestGeneration) return;
     setStatus('Could not load the usage summary. Try again.');
   }
 }
@@ -110,6 +115,7 @@ logoutButton.addEventListener('click', async () => {
       body: JSON.stringify({}),
     });
     if (!response.ok) throw new Error('Sign out failed');
+    summaryRequestGeneration += 1;
     showLogin();
     setStatus('You are signed out.');
   } catch {
