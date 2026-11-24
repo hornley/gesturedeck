@@ -268,6 +268,12 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     fakeWindow.dispatchMessage({ source: 'gesturedeck-extension', type: 'canva-target-state', ...nextState });
   };
   setGlobal('window', fakeWindow);
+  const telemetryStorage = new Map();
+  setGlobal('sessionStorage', {
+    getItem: (key) => telemetryStorage.get(key) ?? null,
+    setItem: (key, value) => telemetryStorage.set(key, value),
+  });
+  setGlobal('crypto', { randomUUID: () => 'usage-session-id' });
   let cameraRequests = 0;
   setGlobal('navigator', {
     mediaDevices: { getUserMedia: async () => { cameraRequests += 1; throw new Error('Camera should remain off.'); } },
@@ -279,6 +285,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
   setGlobal('fetch', async (url, options = {}) => {
     const call = { url, options, body: options.body ? JSON.parse(options.body) : undefined };
     calls.push(call);
+    if (url === '/api/usage-analytics/event') return { ok: true };
     if (url === '/api/mobile-remote/interfaces') {
       return { ok: true, json: async () => ({ interfaces: ['192.168.1.20', '10.0.0.4'] }) };
     }
@@ -364,6 +371,8 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(elements.get('pairing-url-panel').hidden, false);
 
     socket.message({ type: 'phonePaired' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_connected'));
     assert.match(elements.get('pairing-status').textContent, /Phone connected/);
     await elements.get('disconnect-phone').dispatch('click');
     assert.ok(calls.some(({ url, body }) => url === '/api/mobile-remote/stop' && body && Object.keys(body).length === 0));
@@ -431,9 +440,11 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     const canvaSocket = RemoteSocket.instance;
     canvaSocket.open();
     canvaSocket.message({ type: 'presenterReady' });
+    canvaSocket.message({ type: 'phonePaired' });
     canvaSocket.message({ type: 'command', id: 'canva-next', action: 'next' });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(extensionRequests.at(-1).action, 'next');
+    assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation'));
     assert.equal(elements.get('slide-number').textContent, '01');
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-next', accepted: true });
 
@@ -445,6 +456,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     const pagehideSocket = canvaSocket;
     const stopsBeforePagehide = calls.filter(({ url }) => url === '/api/mobile-remote/stop').length;
     await windowListeners.get('pagehide')?.[0]?.();
+    assert.ok(calls.some(({ url, body, options }) => url === '/api/usage-analytics/event' && body?.event === 'session_ended' && options.keepalive));
     assert.equal(calls.filter(({ url }) => url === '/api/mobile-remote/stop').length, stopsBeforePagehide + 1);
     assert.equal(pagehideSocket.readyState, 3);
     assert.equal(elements.get('pairing-url').value, '');

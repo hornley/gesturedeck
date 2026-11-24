@@ -2,6 +2,7 @@ import { openPdfPresentation } from './src/pdf-presentation.js';
 import { PresentationController } from './src/presentation.js';
 import { createMobileRemoteClient } from './src/mobile-remote-client.js';
 import { createCanvaExtensionBridge } from './extension/shared/page-bridge.js';
+import { trackUsageEvent } from './src/usage-analytics-client.js';
 
 const $ = (id) => document.getElementById(id);
 function isLocalNetworkHost(hostname) {
@@ -118,6 +119,7 @@ const remoteStopRequests = new Map();
 let cloudRemoteSession = null;
 let closingMobileRemote = false;
 let pairedPhones = [];
+let phoneConnectedForSession = false;
 let pairingInviteExpired = false;
 let pageIsHiding = false;
 let canvaTarget = { connected: false, ready: false };
@@ -411,7 +413,11 @@ export function connectMobileRemote({ hostCredential, WebSocketImpl, onConnectio
   mobileRemoteClient?.close();
   mobileRemoteClient = createMobileRemoteClient({
     hostCredential, WebSocketImpl, onConnection, path,
-    onCommand: handleRemoteCommand,
+    onCommand: (command) => {
+      const accepted = handleRemoteCommand(command);
+      if (accepted) void trackUsageEvent('phone_navigation');
+      return accepted;
+    },
     location: window.location,
   });
   mobileRemoteClient.publishState(remoteSnapshot());
@@ -626,6 +632,8 @@ function handleMobileRemoteConnection(event, generation) {
     return;
   }
   if (event.type === 'phonePaired') {
+    phoneConnectedForSession = true;
+    void trackUsageEvent('phone_connected');
     setPairingStatus('Phone connected. The same link remains available to other phones.');
     return;
   }
@@ -830,6 +838,10 @@ async function renewPairingInvite() {
 }
 
 async function stopMobileRemote({ keepalive = false, force = false, stopSession = true } = {}) {
+  if (phoneConnectedForSession) {
+    phoneConnectedForSession = false;
+    void trackUsageEvent('session_ended', { keepalive });
+  }
   const shouldPostStop = stopSession && (force || remoteActive || remoteStarting);
   ++remoteGeneration;
   closingMobileRemote = true;
@@ -925,6 +937,7 @@ async function loadPdfFile(file) {
     copyPdfCanvas(firstPage);
     setPdfStatus(`${file.name} opened · ${candidate.numPages} ${candidate.numPages === 1 ? 'page' : 'pages'}`);
     setPdfError(null);
+    void trackUsageEvent('pdf_imported');
     if (previous) await previous.destroy();
   } catch (error) {
     if (candidate && candidate !== state.pdf) await candidate.destroy();
