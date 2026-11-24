@@ -28,7 +28,12 @@ function sameOrigin(request) {
   if (typeof request.headers.host !== 'string' || typeof request.headers.origin !== 'string') return false;
   try {
     const origin = new URL(request.headers.origin);
-    return ['http:', 'https:'].includes(origin.protocol) && origin.host.toLowerCase() === request.headers.host.toLowerCase()
+    const forwardedProto = request.headers['x-forwarded-proto'];
+    if (typeof forwardedProto === 'string' && (forwardedProto.includes(',') || !['http', 'https'].includes(forwardedProto.trim().toLowerCase()))) return false;
+    const protocol = typeof forwardedProto === 'string'
+      ? `${forwardedProto.trim().toLowerCase()}:` : request.socket?.encrypted ? 'https:' : 'http:';
+    return ['http:', 'https:'].includes(protocol) && origin.protocol === protocol
+      && origin.host.toLowerCase() === request.headers.host.toLowerCase()
       && !origin.username && !origin.password && origin.pathname === '/' && !origin.search && !origin.hash;
   } catch { return false; }
 }
@@ -78,8 +83,9 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
       if (parsed.searchParams.getAll('days').length !== 1 || [...parsed.searchParams.keys()].some((key) => !['__gd_route', 'days'].includes(key))) { sendJson(response, 400, { error: 'bad_request' }); return; }
       const days = Number(parsed.searchParams.get('days'));
       if (![7, 30, 90].includes(days)) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      if (typeof env.ANALYTICS_PASSWORD !== 'string' || !env.ANALYTICS_PASSWORD || !store?.get || !store?.hgetall) { sendJson(response, 503, { error: 'unavailable' }); return; }
       const token = cookieToken(request);
-      if (!token || typeof env.ANALYTICS_PASSWORD !== 'string' || !env.ANALYTICS_PASSWORD || !store?.get || !store?.hgetall) { sendJson(response, 401, { error: 'unauthorized' }); return; }
+      if (!token) { sendJson(response, 401, { error: 'unauthorized' }); return; }
       try {
         if (await store.get(`${TOKEN_PREFIX}${hashedToken(token)}`) !== '1') { sendJson(response, 401, { error: 'unauthorized' }); return; }
         sendJson(response, 200, await readUsageSummary(store, { days, now: now() }));
@@ -93,9 +99,9 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
     if (parsed.searchParams.getAll('__gd_route').length !== 1 || [...parsed.searchParams.keys()].some((key) => key !== '__gd_route')) { sendJson(response, 400, { error: 'bad_request' }); return; }
     if (route === 'event') {
       if (!['event', 'sessionId'].every((key) => Object.hasOwn(body, key)) || Object.keys(body).some((key) => !['event', 'sessionId'].includes(key))) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      if (!EVENTS.has(body.event) || typeof body.sessionId !== 'string' || !UUID_PATTERN.test(body.sessionId)) { sendJson(response, 400, { error: 'bad_request' }); return; }
       if (env.VERCEL_ENV !== 'production') { sendJson(response, 200, { ok: true }); return; }
       if (!store || typeof store.eval !== 'function') { sendJson(response, 503, { error: 'unavailable' }); return; }
-      if (!EVENTS.has(body.event) || typeof body.sessionId !== 'string' || !UUID_PATTERN.test(body.sessionId)) { sendJson(response, 400, { error: 'bad_request' }); return; }
       try { await trackUsageEvent(store, body); sendJson(response, 200, { ok: true }); } catch (error) {
         sendJson(response, 503, { error: 'unavailable' });
       }

@@ -26,17 +26,33 @@ test('Vercel exposes the four public usage analytics routes', () => {
 test('analytics API validates event input and reports unavailable Redis', async () => {
   const redis = new ApiRedis();
   await withApi({ redis, env: { VERCEL_ENV: 'production', ANALYTICS_PASSWORD: 'secret' } }, async (base) => {
-    const request = (payload, origin = base) => fetch(`${base}/api/usage-analytics?__gd_route=event`, {
-      method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(payload),
+    const request = (body, { origin = base, contentType = 'application/json' } = {}) => fetch(`${base}/api/usage-analytics?__gd_route=event`, {
+      method: 'POST', headers: { origin, 'content-type': contentType }, body,
     });
-    assert.equal((await request({ event: 'pdf_imported', sessionId: SESSION_ID })).status, 200);
-    assert.equal((await request({ event: 'pdf_imported', sessionId: SESSION_ID, extra: 1 })).status, 400);
-    assert.equal((await request('{', base)).status, 400);
-    assert.equal((await request({ event: 'pdf_imported', sessionId: SESSION_ID }, 'https://elsewhere.test')).status, 403);
+    for (const event of ['pdf_imported', 'phone_connected', 'phone_navigation', 'session_ended']) {
+      assert.equal((await request(JSON.stringify({ event, sessionId: SESSION_ID }))).status, 200);
+    }
+    assert.equal(redis.eventCalls, 4);
+    assert.equal((await request(JSON.stringify({ event: 'pdf_imported', sessionId: SESSION_ID, extra: 1 }))).status, 400);
+    assert.equal((await request('{')).status, 400);
+    assert.equal((await request('{"event":"pdf_imported","sessionId":"550e8400-e29b-41d4-a716-446655440000"', { contentType: 'text/plain' })).status, 400);
+    assert.equal((await request(JSON.stringify({ event: 'pdf_imported', sessionId: SESSION_ID }), { origin: 'https://elsewhere.test' })).status, 403);
+    assert.equal((await request(JSON.stringify({ event: 'pdf_imported', sessionId: SESSION_ID }), { origin: base.replace('http:', 'https:') })).status, 403);
+    assert.equal((await request(' '.repeat(1025))).status, 400);
   });
   await withApi({ env: { VERCEL_ENV: 'production' } }, async (base) => {
     const response = await fetch(`${base}/api/usage-analytics?__gd_route=event`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ event: 'pdf_imported', sessionId: SESSION_ID }) });
     assert.equal(response.status, 503);
+  });
+});
+
+test('preview drops valid events but still rejects malformed events', async () => {
+  const redis = new ApiRedis();
+  await withApi({ redis, env: { VERCEL_ENV: 'preview' } }, async (base) => {
+    const send = (payload) => fetch(`${base}/api/usage-analytics?__gd_route=event`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    assert.equal((await send({ event: 'pdf_imported', sessionId: SESSION_ID })).status, 200);
+    assert.equal((await send({ event: 'not-real', sessionId: SESSION_ID })).status, 400);
+    assert.equal(redis.eventCalls, 0);
   });
 });
 
@@ -45,11 +61,13 @@ test('missing analytics configuration never returns a summary', async () => {
     const login = await fetch(`${base}/api/usage-analytics?__gd_route=login`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'guess' }) });
     assert.equal(login.status, 503);
     const summary = await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`, { headers: { cookie: 'gd_analytics=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } });
-    assert.equal(summary.status, 401);
+    assert.equal(summary.status, 503);
   });
   await withApi({ env: { ANALYTICS_PASSWORD: 'secret' } }, async (base) => {
     const login = await fetch(`${base}/api/usage-analytics?__gd_route=login`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }) });
     assert.equal(login.status, 503);
+    const summary = await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`);
+    assert.equal(summary.status, 503);
   });
 });
 
@@ -126,6 +144,8 @@ class FakeRedis {
 
 class ApiRedis extends FakeRedis {
   values = new Map();
+  eventCalls = 0;
+  async eval(...args) { this.eventCalls++; return super.eval(...args); }
   async set(key, value, ...args) { this.values.set(key, value); this.lastSetArgs = args; return 'OK'; }
   async get(key) { return this.values.get(key) ?? null; }
   async del(key) { this.values.delete(key); }
