@@ -1,3 +1,5 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+
 const PREFIX = 'gd:usage:v1:';
 const SESSION_TTL_SECONDS = 24 * 60 * 60;
 const DAILY_TTL_SECONDS = 90 * 24 * 60 * 60;
@@ -11,6 +13,127 @@ const COUNTERS = [
   ['completed_presentations', 'completedPresentations'],
   ['presentation_seconds', 'presentationSeconds'],
 ];
+const API_PATH = '/api/usage-analytics';
+const TOKEN_COOKIE = 'gd_analytics';
+const TOKEN_PREFIX = `${PREFIX}login:`;
+const TOKEN_TTL_SECONDS = 12 * 60 * 60;
+const MAX_API_BODY_BYTES = 1024;
+
+function sendJson(response, status, body) {
+  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  response.end(JSON.stringify(body));
+}
+
+function sameOrigin(request) {
+  if (typeof request.headers.host !== 'string' || typeof request.headers.origin !== 'string') return false;
+  try {
+    const origin = new URL(request.headers.origin);
+    return ['http:', 'https:'].includes(origin.protocol) && origin.host.toLowerCase() === request.headers.host.toLowerCase()
+      && !origin.username && !origin.password && origin.pathname === '/' && !origin.search && !origin.hash;
+  } catch { return false; }
+}
+
+function readApiJson(request) {
+  return new Promise((resolve, reject) => {
+    if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers['content-type'] ?? '')) {
+      request.resume(); reject(new Error('bad-request')); return;
+    }
+    const chunks = []; let size = 0; let oversized = false;
+    request.on('data', (chunk) => { size += chunk.length; if (size > MAX_API_BODY_BYTES) oversized = true; else if (!oversized) chunks.push(chunk); });
+    request.on('end', () => {
+      if (oversized) { reject(new Error('bad-request')); return; }
+      try {
+        const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('bad-request');
+        resolve(value);
+      } catch { reject(new Error('bad-request')); }
+    });
+    request.on('error', () => reject(new Error('bad-request')));
+  });
+}
+
+function cookieToken(request) {
+  const match = (request.headers.cookie ?? '').match(/(?:^|;\s*)gd_analytics=([A-Za-z0-9_-]{40,})/);
+  return match?.[1] ?? null;
+}
+
+function hashedToken(token) { return createHash('sha256').update(token).digest('hex'); }
+
+export function attachUsageAnalytics(server, { redis, env = process.env, now = Date.now } = {}) {
+  let client = redis;
+  const getRedis = async () => {
+    if (client !== undefined) return client;
+    try { const { createRedisClient } = await import('./redis-client.js'); client = createRedisClient(env); } catch { client = null; }
+    return client;
+  };
+  server.on('request', async (request, response) => {
+    let parsed;
+    try { parsed = new URL(request.url, 'http://gesturedeck.invalid'); } catch { sendJson(response, 400, { error: 'bad_request' }); return; }
+    if (parsed.pathname !== API_PATH) return;
+    const routes = parsed.searchParams.getAll('__gd_route');
+    const route = routes.length === 1 ? routes[0] : null;
+    if (!['event', 'login', 'logout', 'summary'].includes(route)) { sendJson(response, 404, { error: 'not_found' }); return; }
+    const store = await getRedis();
+    if (route === 'summary' && request.method === 'GET') {
+      if (parsed.searchParams.getAll('days').length !== 1 || [...parsed.searchParams.keys()].some((key) => !['__gd_route', 'days'].includes(key))) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      const days = Number(parsed.searchParams.get('days'));
+      if (![7, 30, 90].includes(days)) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      const token = cookieToken(request);
+      if (!token || typeof env.ANALYTICS_PASSWORD !== 'string' || !env.ANALYTICS_PASSWORD || !store?.get || !store?.hgetall) { sendJson(response, 401, { error: 'unauthorized' }); return; }
+      try {
+        if (await store.get(`${TOKEN_PREFIX}${hashedToken(token)}`) !== '1') { sendJson(response, 401, { error: 'unauthorized' }); return; }
+        sendJson(response, 200, await readUsageSummary(store, { days, now: now() }));
+      } catch { sendJson(response, 503, { error: 'unavailable' }); }
+      return;
+    }
+    if (request.method !== 'POST') { sendJson(response, 405, { error: 'bad_request' }); return; }
+    if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden' }); return; }
+    let body;
+    try { body = await readApiJson(request); } catch { sendJson(response, 400, { error: 'bad_request' }); return; }
+    if (parsed.searchParams.getAll('__gd_route').length !== 1 || [...parsed.searchParams.keys()].some((key) => key !== '__gd_route')) { sendJson(response, 400, { error: 'bad_request' }); return; }
+    if (route === 'event') {
+      if (!['event', 'sessionId'].every((key) => Object.hasOwn(body, key)) || Object.keys(body).some((key) => !['event', 'sessionId'].includes(key))) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      if (env.VERCEL_ENV !== 'production') { sendJson(response, 200, { ok: true }); return; }
+      if (!store || typeof store.eval !== 'function') { sendJson(response, 503, { error: 'unavailable' }); return; }
+      if (!EVENTS.has(body.event) || typeof body.sessionId !== 'string' || !UUID_PATTERN.test(body.sessionId)) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      try { await trackUsageEvent(store, body); sendJson(response, 200, { ok: true }); } catch (error) {
+        sendJson(response, 503, { error: 'unavailable' });
+      }
+      return;
+    }
+    if (route === 'login') {
+      if (Object.keys(body).length !== 1 || !Object.hasOwn(body, 'password')) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      const configured = env.ANALYTICS_PASSWORD;
+      if (typeof configured !== 'string' || !configured || !store?.set) { sendJson(response, 503, { error: 'unavailable' }); return; }
+      const supplied = typeof body.password === 'string' ? Buffer.from(body.password) : Buffer.alloc(0);
+      const expected = Buffer.from(configured);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied.length === expected.length ? supplied : Buffer.alloc(expected.length), expected)) { sendJson(response, 401, { error: 'unauthorized' }); return; }
+      const token = randomBytes(32).toString('base64url');
+      try {
+        await store.set(`${TOKEN_PREFIX}${hashedToken(token)}`, '1', { ex: TOKEN_TTL_SECONDS });
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+          'set-cookie': `${TOKEN_COOKIE}=${token}; HttpOnly; Secure; SameSite=Strict; Path=${API_PATH}; Max-Age=${TOKEN_TTL_SECONDS}` });
+        response.end(JSON.stringify({ ok: true }));
+      } catch { sendJson(response, 503, { error: 'unavailable' }); }
+      return;
+    }
+    if (route === 'logout') {
+      if (Object.keys(body).length !== 0) { sendJson(response, 400, { error: 'bad_request' }); return; }
+      const token = cookieToken(request);
+      if (!token || !store?.get || !store?.del) { sendJson(response, 401, { error: 'unauthorized' }); return; }
+      try {
+        const key = `${TOKEN_PREFIX}${hashedToken(token)}`;
+        if (await store.get(key) !== '1') { sendJson(response, 401, { error: 'unauthorized' }); return; }
+        await store.del(key);
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+          'set-cookie': `${TOKEN_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=${API_PATH}; Max-Age=0` });
+        response.end(JSON.stringify({ ok: true }));
+      } catch { sendJson(response, 503, { error: 'unavailable' }); }
+      return;
+    }
+    sendJson(response, 404, { error: 'not_found' });
+  });
+}
 
 export const USAGE_EVENT_SCRIPT = `
 local sessionKey, dailyKey = KEYS[1], KEYS[2]
