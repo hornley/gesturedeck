@@ -46,13 +46,16 @@ The extension dispatches navigation keys to the selected Canva tab through Chrom
 
 Open the hosted GestureDeck site over HTTPS, choose **Start presenting**, and pair phones with the QR code or link. The presenter can use a sample deck or import a PDF in that browser; for Canva, connect the selected tab with the extension first. Up to eight phones can join, including phones on another network.
 
-The Vercel deployment uses Upstash Redis for temporary session and relay state. Configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` in the deployment environment; the legacy `KV_REST_API_URL` and `KV_REST_API_TOKEN` names are also supported. Without these values, hosted pairing reports that storage is unavailable; local presentation and phone controls still work. Never put Redis credentials in source control or browser code.
+The Vercel deployment uses Upstash Redis for temporary session and relay state, and for aggregate feature-use counts. Configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` in the deployment environment; the legacy `KV_REST_API_URL` and `KV_REST_API_TOKEN` names are also supported. Without these values, hosted pairing reports that storage is unavailable and feature-use events are not retained. Never put Redis credentials in source control or browser code. Set `ANALYTICS_PASSWORD` as a Vercel environment secret to protect the private `/analytics` feature-use page. Vercel Web Analytics must be enabled for the project in the Vercel dashboard; public traffic metrics such as visitors and page views appear there, separately from feature-use aggregates at `/analytics`. Do not add these secrets to the source tree.
 
 ## Privacy and data flow
 
-- Imported PDF bytes and rendered pages remain in the browser for the current page session.
+- Anonymous public-site traffic is measured by Vercel Web Analytics on the landing and presentation workspace pages. These traffic metrics are available in the Vercel dashboard.
+- Hosted feature-use events are reduced to aggregate counts shown at `/analytics`; the private page is protected by `ANALYTICS_PASSWORD`. The event data does not include PDF bytes, filenames, page contents, slide contents, slide positions, phone labels, or persistent user identifiers.
+- Short-lived feature-analytics session state is retained for at most 24 hours; daily aggregate counts are retained for 90 days. Presentation duration is an estimate from the first hosted phone connection until the hosted session ends; an abrupt close may prevent the final duration from being recorded.
+- Local development and self-hosted usage are not counted by the hosted analytics.
 - The local phone remote sends pairing credentials, phone labels, target readiness, slide position and busy state when available, and navigation commands. It does not send presentation media.
-- Hosted sessions use Redis for temporary pairing credentials, phone metadata, target readiness, slide position, busy state, and navigation commands. Sessions expire after up to four hours and invites after five minutes. The relay does not receive PDFs, slide content, rendered pages, notes, or Canva credentials.
+- Hosted sessions use Redis for temporary pairing credentials, phone metadata, target readiness, slide position, busy state, navigation commands, and a separate namespace for aggregate feature-use metrics. Sessions expire after up to four hours and invites after five minutes. The relay does not receive PDFs, slide content, rendered pages, notes, or Canva credentials.
 
 Use the hosted relay when phones cannot reach the presenter over the same LAN or Tailscale network. The local sample deck and PDF presentation work offline after dependencies are installed.
 

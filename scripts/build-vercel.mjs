@@ -46,10 +46,12 @@ for (const file of [
   'mobile-remote-phone.js',
   'gesture-engine.js',
   'usage-analytics-client.js',
+  'site-analytics.js',
 ]) {
   await copy(`src/${file}`);
 }
 
+await copy('node_modules/@vercel/analytics/dist/index.mjs');
 await copy(
   'node_modules/@mediapipe/tasks-vision/vision_bundle.mjs',
 );

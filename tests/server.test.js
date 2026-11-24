@@ -38,6 +38,33 @@ test('served app shell loads the client controller module', async () => {
   }
 });
 
+test('public traffic tracking is loaded only on the landing and workspace pages', async () => {
+  const server = createAppServer();
+  try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    for (const route of ['/', '/workspace.html']) {
+      const response = await fetch(`${origin}${route}`);
+      assert.equal(response.status, 200);
+      assert.match(await response.text(), /<script type="module" src="\/src\/site-analytics\.js"><\/script>/);
+    }
+    for (const route of ['/analytics.html', '/mobile-remote.html']) {
+      const response = await fetch(`${origin}${route}`);
+      assert.equal(response.status, 200);
+      assert.doesNotMatch(await response.text(), /site-analytics\.js/);
+    }
+    const trackingModule = await fetch(`${origin}/src/site-analytics.js`);
+    assert.equal(trackingModule.status, 200);
+    assert.match(await trackingModule.text(), /inject\(\)/);
+    const packageEntry = await fetch(`${origin}/node_modules/@vercel/analytics/dist/index.mjs`);
+    assert.equal(packageEntry.status, 200);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
 test('development server exposes the analytics page and its assets only', async () => {
   const server = createAppServer();
   try {
