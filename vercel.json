@@ -9,6 +9,7 @@
   "buildCommand": "npm run build:vercel",
   "outputDirectory": "dist",
   "rewrites": [
+    { "source": "/analytics", "destination": "/analytics.html" },
     { "source": "/api/usage-analytics/event", "destination": "/api/usage-analytics?__gd_route=event" },
     { "source": "/api/usage-analytics/login", "destination": "/api/usage-analytics?__gd_route=login" },
     { "source": "/api/usage-analytics/logout", "destination": "/api/usage-analytics?__gd_route=logout" },

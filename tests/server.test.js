@@ -38,6 +38,26 @@ test('served app shell loads the client controller module', async () => {
   }
 });
 
+test('development server exposes the analytics page and its assets only', async () => {
+  const server = createAppServer();
+  try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const page = await fetch(`${origin}/analytics`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /analytics\.js/);
+    for (const route of ['/analytics.css', '/analytics.js']) {
+      const response = await fetch(`${origin}${route}`);
+      assert.equal(response.status, 200, `${route} should be served`);
+    }
+    assert.equal((await fetch(`${origin}/analytics-private.js`)).status, 404);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
 test('development server exposes the Canva page bridge and protocol but keeps Chrome-only files private', async () => {
   const server = createAppServer();
   try {

@@ -19,11 +19,14 @@ for (const file of [
   'index.html',
   'workspace.html',
   'mobile-remote.html',
+  'analytics.html',
   'home.css',
   'styles.css',
   'mobile-remote.css',
+  'analytics.css',
   'favicon.svg',
   'app.js',
+  'analytics.js',
   'extension/shared/page-bridge.js',
   'extension/shared/protocol.js',
   'assets/hand_landmarker.task',
@@ -42,6 +45,7 @@ for (const file of [
   'mobile-remote-client.js',
   'mobile-remote-phone.js',
   'gesture-engine.js',
+  'usage-analytics-client.js',
 ]) {
   await copy(`src/${file}`);
 }
