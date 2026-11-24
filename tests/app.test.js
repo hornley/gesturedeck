@@ -217,6 +217,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     'copy-pairing-url', 'pairing-status', 'new-pairing-link', 'disconnect-phone',
     'paired-phones-panel', 'paired-phones', 'paired-phones-empty', 'paired-phone-count',
     'close-pairing-dialog', 'slide-number', 'slide-count', 'deck-progress',
+    'pdf-file',
     'deck-visual', 'sample-canvas-topline', 'sample-canvas-content', 'sample-canvas-footer',
   ];
   const elements = new Map(ids.map((id) => [id, new FakeElement()]));
@@ -282,10 +283,14 @@ test('presenter pairing lists phones and disconnects one without affecting the s
 
   const calls = [];
   let startCount = 0;
+  let failTelemetry = false;
   setGlobal('fetch', async (url, options = {}) => {
     const call = { url, options, body: options.body ? JSON.parse(options.body) : undefined };
     calls.push(call);
-    if (url === '/api/usage-analytics/event') return { ok: true };
+    if (url === '/api/usage-analytics/event') {
+      if (failTelemetry) throw new Error('analytics offline');
+      return { ok: true };
+    }
     if (url === '/api/mobile-remote/interfaces') {
       return { ok: true, json: async () => ({ interfaces: ['192.168.1.20', '10.0.0.4'] }) };
     }
@@ -318,6 +323,10 @@ test('presenter pairing lists phones and disconnects one without affecting the s
   setGlobal('WebSocket', RemoteSocket);
   try {
     await import(`../app.js?pairing-test=${Date.now()}`);
+    elements.get('pdf-file').files = [{ name: 'broken.pdf', async arrayBuffer() { return new Uint8Array([1, 2, 3]).buffer; } }];
+    elements.get('pdf-file').dispatch('change');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'pdf_imported'), false);
     const connectButton = elements.get('connect-phone');
     assert.equal(connectButton.hidden, false, 'Connect phone is visible with the sample deck');
     connectButton.focus();
@@ -418,6 +427,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
       await elements.get('disconnect-phone').dispatch('click');
       assert.equal(elements.get('pairing-status').textContent, 'Disconnected');
       assert.equal(calls.filter(({ url }) => url === '/api/mobile-remote/stop').length, stopCount + 1);
+      assert.equal(calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'session_ended').length, 1);
     }
 
     await elements.get('close-pairing-dialog').dispatch('click');
@@ -449,9 +459,18 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-next', accepted: true });
 
     publishExtensionState({ connected: false, ready: false });
+    const navigationEventsBeforeReject = calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length;
     canvaSocket.message({ type: 'command', id: 'canva-offline', action: 'next' });
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-offline', accepted: false });
+    assert.equal(calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length, navigationEventsBeforeReject);
+
+    publishExtensionState({ connected: true, ready: true });
+    failTelemetry = true;
+    canvaSocket.message({ type: 'command', id: 'canva-telemetry-offline', action: 'next' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-telemetry-offline', accepted: true });
+    failTelemetry = false;
 
     const pagehideSocket = canvaSocket;
     const stopsBeforePagehide = calls.filter(({ url }) => url === '/api/mobile-remote/stop').length;

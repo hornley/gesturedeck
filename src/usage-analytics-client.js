@@ -31,7 +31,7 @@ export async function trackUsageEvent(event, {
   if (keepalive && event === 'session_ended') {
     try {
       const beacon = sendBeacon ?? globalThis.navigator?.sendBeacon?.bind(globalThis.navigator);
-      if (beacon?.('/api/usage-analytics/event', body)) return;
+      if (beacon?.('/api/usage-analytics/event', new Blob([body], { type: 'application/json' }))) return;
     } catch {
       // A failed beacon falls back to keepalive fetch.
     }
