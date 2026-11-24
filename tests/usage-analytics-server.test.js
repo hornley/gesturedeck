@@ -10,9 +10,25 @@ const FIELDS = ['pdf_imports', 'phone_connected_sessions', 'pdf_and_phone_sessio
 class FakeRedis {
   sessions = new Map();
   days = new Map();
+  sessionExpiresAt = new Map();
+  dayExpiresAt = new Map();
+  now = 0;
+
+  setNow(now) { this.now = now; }
+  expireMap(values, expirations, now) {
+    for (const [key, expiresAt] of expirations) {
+      if (expiresAt <= now) { values.delete(key); expirations.delete(key); }
+    }
+  }
+
   async eval(_script, keys, args) {
     const [sessionKey, dayKey] = keys;
-    const [event, now] = args;
+    const [event, rawNow, sessionTtl, dailyTtl] = args;
+    const now = Number(rawNow);
+    this.now = now;
+    this.expireMap(this.sessions, this.sessionExpiresAt, now);
+    this.expireMap(this.days, this.dayExpiresAt, now);
+    const isNewSession = !this.sessions.has(sessionKey);
     const state = this.sessions.get(sessionKey) ?? { pdf: false, phone: false, combined: false, navigation: false, ended: false, firstPhoneAt: null };
     const counts = this.days.get(dayKey) ?? Object.fromEntries(FIELDS.map((field) => [field, 0]));
     if (event === 'pdf_imported' && !state.pdf) { state.pdf = true; counts.pdf_imports++; }
@@ -25,10 +41,16 @@ class FakeRedis {
       counts.presentation_seconds += Math.min(14_400, Math.max(0, Math.floor((Number(now) - state.firstPhoneAt) / 1000)));
     }
     this.sessions.set(sessionKey, state);
+    if (isNewSession) this.sessionExpiresAt.set(sessionKey, now + Number(sessionTtl) * 1000);
     this.days.set(dayKey, counts);
+    this.dayExpiresAt.set(dayKey, now + Number(dailyTtl) * 1000);
     return 1;
   }
-  async hgetall(key) { return this.days.get(key) ?? {}; }
+  async hgetall(key) {
+    this.expireMap(this.sessions, this.sessionExpiresAt, this.now);
+    this.expireMap(this.days, this.dayExpiresAt, this.now);
+    return this.days.get(key) ?? {};
+  }
 }
 
 test('tracks deduplicated events and computes daily and total summary', async () => {
@@ -68,4 +90,21 @@ test('caps duration at four hours and clamps negative elapsed time to zero', asy
   await trackUsageEvent(negative, { event: 'phone_connected', sessionId: SESSION_ID, now: 10_000 });
   await trackUsageEvent(negative, { event: 'session_ended', sessionId: SESSION_ID, now: 0 });
   assert.equal((await readUsageSummary(negative, { days: 7, now: 10_000 })).totals.presentationSeconds, 0);
+});
+
+test('session TTL starts at the first event and daily aggregates expire after 90 days', async () => {
+  const redis = new FakeRedis();
+  const firstAt = Date.UTC(2026, 10, 25);
+  const sessionKey = `gd:usage:v1:session:${SESSION_ID}`;
+  const dayKey = 'gd:usage:v1:day:2026-11-25';
+  await trackUsageEvent(redis, { event: 'pdf_imported', sessionId: SESSION_ID, now: firstAt });
+  await trackUsageEvent(redis, { event: 'phone_connected', sessionId: SESSION_ID, now: firstAt + 23 * 60 * 60 * 1000 });
+  assert.equal(redis.sessionExpiresAt.get(sessionKey), firstAt + 24 * 60 * 60 * 1000);
+  assert.equal((await redis.hgetall(dayKey)).pdf_imports, 1);
+
+  redis.setNow(firstAt + 24 * 60 * 60 * 1000);
+  await redis.hgetall(dayKey);
+  assert.equal(redis.sessions.has(sessionKey), false);
+  redis.setNow(firstAt + 23 * 60 * 60 * 1000 + 90 * 24 * 60 * 60 * 1000);
+  assert.deepEqual(await redis.hgetall(dayKey), {});
 });
