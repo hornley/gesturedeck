@@ -81,6 +81,20 @@ test('rejects invalid event payloads', async () => {
   ]) await assert.rejects(trackUsageEvent(redis, { ...input, now: 0 }));
 });
 
+test('defaults an omitted timestamp to the current clock', async () => {
+  const redis = new FakeRedis();
+  const originalNow = Date.now;
+  const expectedNow = Date.UTC(2026, 10, 25, 12);
+  Date.now = () => expectedNow;
+  try {
+    await trackUsageEvent(redis, { event: 'pdf_imported', sessionId: SESSION_ID });
+  } finally {
+    Date.now = originalNow;
+  }
+  assert.equal(redis.now, expectedNow);
+  assert.equal((await redis.hgetall('gd:usage:v1:day:2026-11-25')).pdf_imports, 1);
+});
+
 test('caps duration at four hours and clamps negative elapsed time to zero', async () => {
   const capped = new FakeRedis();
   await trackUsageEvent(capped, { event: 'phone_connected', sessionId: SESSION_ID, now: 0 });

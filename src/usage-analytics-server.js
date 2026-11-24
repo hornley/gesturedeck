@@ -55,7 +55,7 @@ function utcDate(timestamp) { return new Date(timestamp).toISOString().slice(0, 
 export async function trackUsageEvent(redis, { event, sessionId, now } = {}) {
   if (!redis || typeof redis.eval !== 'function') throw new TypeError('Redis is required');
   if (arguments.length < 2) throw new TypeError('Event payload is required');
-  if (!['event', 'sessionId', 'now'].every((key) => key in arguments[1]) || Object.keys(arguments[1]).some((key) => !['event', 'sessionId', 'now'].includes(key))) {
+  if (!['event', 'sessionId'].every((key) => key in arguments[1]) || Object.keys(arguments[1]).some((key) => !['event', 'sessionId', 'now'].includes(key))) {
     throw new TypeError('Invalid event fields');
   }
   if (!EVENTS.has(event)) throw new TypeError('Invalid event');
