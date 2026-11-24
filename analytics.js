@@ -67,12 +67,12 @@ async function loadSummary() {
     dailyRows.replaceChildren();
     for (const row of daily) {
       const tr = document.createElement('tr');
-      const values = [row.date, row.pdf_imports, row.phone_connected_sessions, row.completed_presentations, formatDuration(row.presentation_seconds)];
+      const values = [row.date, row.pdf_imports, row.phone_connected_sessions, row.pdf_and_phone_sessions, row.phone_navigation_sessions, row.completed_presentations, formatDuration(row.presentation_seconds)];
       for (const [index, value] of values.entries()) {
         const cell = document.createElement(index === 0 ? 'th' : 'td');
         if (index === 0) cell.scope = 'row';
         cell.textContent = index === 0 ? value : numberFormat.format(value);
-        if (index === 4) cell.textContent = formatDuration(row.presentation_seconds);
+        if (index === 6) cell.textContent = formatDuration(row.presentation_seconds);
         tr.append(cell);
       }
       dailyRows.append(tr);
@@ -105,7 +105,10 @@ rangeSelect.addEventListener('change', loadSummary);
 logoutButton.addEventListener('click', async () => {
   setStatus('Signing out…');
   try {
-    const response = await fetch('/api/usage-analytics/logout', { method: 'POST', credentials: 'same-origin' });
+    const response = await fetch('/api/usage-analytics/logout', {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
     if (!response.ok) throw new Error('Sign out failed');
     showLogin();
     setStatus('You are signed out.');
