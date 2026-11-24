@@ -415,6 +415,12 @@ export function connectMobileRemote({ hostCredential, WebSocketImpl, onConnectio
     hostCredential, WebSocketImpl, onConnection, path,
     onCommand: (command) => {
       const accepted = handleRemoteCommand(command);
+      if (accepted && typeof accepted.then === 'function') {
+        return accepted.then((result) => {
+          if (result === true) void trackUsageEvent('phone_navigation');
+          return result;
+        });
+      }
       if (accepted) void trackUsageEvent('phone_navigation');
       return accepted;
     },

@@ -241,6 +241,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
   };
   setGlobal('document', fakeDocument);
   let extensionState = { connected: false, ready: false };
+  let navigationReplyAccepted = null;
   const extensionRequests = [];
   const fakeWindow = {
     location: { protocol: 'http:', host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173' },
@@ -260,7 +261,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
       if (message?.source !== 'gesturedeck' || message.type !== 'canva-controller-request') return;
       const response = message.command === 'status'
         ? { source: 'gesturedeck-extension', type: 'canva-controller-response', id: message.id, command: 'status', state: { ...extensionState } }
-        : { source: 'gesturedeck-extension', type: 'canva-controller-response', id: message.id, command: 'navigate', accepted: extensionState.connected && extensionState.ready };
+        : { source: 'gesturedeck-extension', type: 'canva-controller-response', id: message.id, command: 'navigate', accepted: navigationReplyAccepted ?? (extensionState.connected && extensionState.ready) };
       queueMicrotask(() => this.dispatchMessage(response, targetOrigin));
     },
   };
@@ -457,6 +458,14 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation'));
     assert.equal(elements.get('slide-number').textContent, '01');
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-next', accepted: true });
+
+    const navigationEventsBeforeCanvaReject = calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length;
+    navigationReplyAccepted = false;
+    canvaSocket.message({ type: 'command', id: 'canva-rejected', action: 'next' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-rejected', accepted: false });
+    assert.equal(calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length, navigationEventsBeforeCanvaReject);
+    navigationReplyAccepted = null;
 
     publishExtensionState({ connected: false, ready: false });
     const navigationEventsBeforeReject = calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length;
