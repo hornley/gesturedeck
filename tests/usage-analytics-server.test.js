@@ -87,6 +87,7 @@ test('analytics login gates summary and logout revokes its Redis token', async (
     const token = decodeURIComponent(cookie.match(/gd_analytics=([^;,]+)/)[1]);
     const key = redis.values.keys().next().value;
     assert.ok(key); assert.ok(!key.includes(token)); assert.equal(redis.lastSetArgs.at(-1).ex, 43200);
+    assert.equal(await redis.get(key), 1);
     assert.equal((await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`, { headers: { cookie: `gd_analytics=${token}` } })).status, 200);
     assert.equal((await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=8`, { headers: { cookie: `gd_analytics=${token}` } })).status, 400);
     const logout = await post('logout', {}, `gd_analytics=${token}`);
@@ -147,7 +148,11 @@ class ApiRedis extends FakeRedis {
   eventCalls = 0;
   async eval(...args) { this.eventCalls++; return super.eval(...args); }
   async set(key, value, ...args) { this.values.set(key, value); this.lastSetArgs = args; return 'OK'; }
-  async get(key) { return this.values.get(key) ?? null; }
+  async get(key) {
+    const value = this.values.get(key);
+    // Upstash parses numeric JSON values on GET, so the stored marker reads back as a number.
+    return value === undefined ? null : typeof value === 'string' && /^-?\d+$/.test(value) ? Number(value) : value;
+  }
   async del(key) { this.values.delete(key); }
 }
 

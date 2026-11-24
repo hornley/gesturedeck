@@ -63,6 +63,7 @@ function cookieToken(request) {
 }
 
 function hashedToken(token) { return createHash('sha256').update(token).digest('hex'); }
+function isValidTokenMarker(value) { return value === 1 || value === '1'; }
 
 export function attachUsageAnalytics(server, { redis, env = process.env, now = Date.now } = {}) {
   let client = redis;
@@ -87,7 +88,7 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
       const token = cookieToken(request);
       if (!token) { sendJson(response, 401, { error: 'unauthorized' }); return; }
       try {
-        if (await store.get(`${TOKEN_PREFIX}${hashedToken(token)}`) !== '1') { sendJson(response, 401, { error: 'unauthorized' }); return; }
+        if (!isValidTokenMarker(await store.get(`${TOKEN_PREFIX}${hashedToken(token)}`))) { sendJson(response, 401, { error: 'unauthorized' }); return; }
         sendJson(response, 200, await readUsageSummary(store, { days, now: now() }));
       } catch { sendJson(response, 503, { error: 'unavailable' }); }
       return;
@@ -129,7 +130,7 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
       if (!token || !store?.get || !store?.del) { sendJson(response, 401, { error: 'unauthorized' }); return; }
       try {
         const key = `${TOKEN_PREFIX}${hashedToken(token)}`;
-        if (await store.get(key) !== '1') { sendJson(response, 401, { error: 'unauthorized' }); return; }
+        if (!isValidTokenMarker(await store.get(key))) { sendJson(response, 401, { error: 'unauthorized' }); return; }
         await store.del(key);
         response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
           'set-cookie': `${TOKEN_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=${API_PATH}; Max-Age=0` });
