@@ -103,7 +103,7 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
       if (!EVENTS.has(body.event) || typeof body.sessionId !== 'string' || !UUID_PATTERN.test(body.sessionId)) { sendJson(response, 400, { error: 'bad_request' }); return; }
       if (env.VERCEL_ENV !== 'production') { sendJson(response, 200, { ok: true }); return; }
       if (!store || typeof store.eval !== 'function') { sendJson(response, 503, { error: 'unavailable' }); return; }
-      try { await trackUsageEvent(store, body); sendJson(response, 200, { ok: true }); } catch (error) {
+      try { await trackUsageEvent(store, body); sendJson(response, 200, { ok: true }); } catch {
         sendJson(response, 503, { error: 'unavailable' });
       }
       return;
