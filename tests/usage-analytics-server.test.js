@@ -67,7 +67,7 @@ test('missing analytics configuration never returns a summary', async () => {
     const login = await fetch(`${base}/api/usage-analytics?__gd_route=login`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }) });
     assert.equal(login.status, 503);
     const summary = await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`);
-    assert.equal(summary.status, 503);
+    assert.equal(summary.status, 401);
   });
 });
 

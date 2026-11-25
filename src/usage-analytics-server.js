@@ -69,7 +69,10 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
   let client = redis;
   const getRedis = async () => {
     if (client !== undefined) return client;
-    try { const { createRedisClient } = await import('./redis-client.js'); client = createRedisClient(env); } catch { client = null; }
+    try {
+      const { createRedisClient } = await import('./redis-client.js');
+      client = createRedisClient(env, { signal: () => AbortSignal.timeout(10_000) });
+    } catch { client = null; }
     return client;
   };
   server.on('request', async (request, response) => {
@@ -79,6 +82,7 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
     const routes = parsed.searchParams.getAll('__gd_route');
     const route = routes.length === 1 ? routes[0] : null;
     if (!['event', 'login', 'logout', 'summary'].includes(route)) { sendJson(response, 404, { error: 'not_found' }); return; }
+    if (route === 'summary' && request.method === 'GET' && !cookieToken(request)) { sendJson(response, 401, { error: 'unauthorized' }); return; }
     const store = await getRedis();
     if (route === 'summary' && request.method === 'GET') {
       if (parsed.searchParams.getAll('days').length !== 1 || [...parsed.searchParams.keys()].some((key) => !['__gd_route', 'days'].includes(key))) { sendJson(response, 400, { error: 'bad_request' }); return; }
