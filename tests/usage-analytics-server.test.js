@@ -23,10 +23,21 @@ test('Vercel exposes the four public usage analytics routes', () => {
   }
 });
 
+test('analytics API handles original rewrite paths and internal query routes', async () => {
+  await withApi({ redis: new ApiRedis(), env: { ANALYTICS_PASSWORD: 'secret' } }, async (base) => {
+    const summary = (path) => fetch(`${base}${path}`);
+    assert.equal((await summary('/api/usage-analytics/summary?days=7')).status, 401);
+    assert.equal((await summary('/api/usage-analytics/summary?__gd_route=summary&days=7')).status, 401);
+    assert.equal((await summary('/api/usage-analytics?__gd_route=summary&days=7')).status, 401);
+    assert.equal((await summary('/api/usage-analytics/summary?__gd_route=login&days=7')).status, 400);
+    assert.equal((await summary('/api/usage-analytics/not-a-route')).status, 404);
+  });
+});
+
 test('analytics API validates event input and reports unavailable Redis', async () => {
   const redis = new ApiRedis();
   await withApi({ redis, env: { VERCEL_ENV: 'production', ANALYTICS_PASSWORD: 'secret' } }, async (base) => {
-    const request = (body, { origin = base, contentType = 'application/json' } = {}) => fetch(`${base}/api/usage-analytics?__gd_route=event`, {
+    const request = (body, { origin = base, contentType = 'application/json' } = {}) => fetch(`${base}/api/usage-analytics/event`, {
       method: 'POST', headers: { origin, 'content-type': contentType }, body,
     });
     for (const event of ['pdf_imported', 'phone_connected', 'phone_navigation', 'session_ended']) {
@@ -41,7 +52,7 @@ test('analytics API validates event input and reports unavailable Redis', async 
     assert.equal((await request(' '.repeat(1025))).status, 400);
   });
   await withApi({ env: { VERCEL_ENV: 'production' } }, async (base) => {
-    const response = await fetch(`${base}/api/usage-analytics?__gd_route=event`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ event: 'pdf_imported', sessionId: SESSION_ID }) });
+    const response = await fetch(`${base}/api/usage-analytics/event`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ event: 'pdf_imported', sessionId: SESSION_ID }) });
     assert.equal(response.status, 503);
   });
 });
@@ -49,7 +60,7 @@ test('analytics API validates event input and reports unavailable Redis', async 
 test('preview drops valid events but still rejects malformed events', async () => {
   const redis = new ApiRedis();
   await withApi({ redis, env: { VERCEL_ENV: 'preview' } }, async (base) => {
-    const send = (payload) => fetch(`${base}/api/usage-analytics?__gd_route=event`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    const send = (payload) => fetch(`${base}/api/usage-analytics/event`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     assert.equal((await send({ event: 'pdf_imported', sessionId: SESSION_ID })).status, 200);
     assert.equal((await send({ event: 'not-real', sessionId: SESSION_ID })).status, 400);
     assert.equal(redis.eventCalls, 0);
@@ -58,15 +69,15 @@ test('preview drops valid events but still rejects malformed events', async () =
 
 test('missing analytics configuration never returns a summary', async () => {
   await withApi({ redis: new ApiRedis(), env: {} }, async (base) => {
-    const login = await fetch(`${base}/api/usage-analytics?__gd_route=login`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'guess' }) });
+    const login = await fetch(`${base}/api/usage-analytics/login`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'guess' }) });
     assert.equal(login.status, 503);
-    const summary = await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`, { headers: { cookie: 'gd_analytics=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } });
+    const summary = await fetch(`${base}/api/usage-analytics/summary?days=7`, { headers: { cookie: 'gd_analytics=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } });
     assert.equal(summary.status, 503);
   });
   await withApi({ env: { ANALYTICS_PASSWORD: 'secret' } }, async (base) => {
-    const login = await fetch(`${base}/api/usage-analytics?__gd_route=login`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }) });
+    const login = await fetch(`${base}/api/usage-analytics/login`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }) });
     assert.equal(login.status, 503);
-    const summary = await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`);
+    const summary = await fetch(`${base}/api/usage-analytics/summary?days=7`);
     assert.equal(summary.status, 401);
   });
 });
@@ -75,8 +86,8 @@ test('analytics login gates summary and logout revokes its Redis token', async (
   const redis = new ApiRedis();
   const env = { VERCEL_ENV: 'production', ANALYTICS_PASSWORD: 'secret' };
   await withApi({ redis, env, now: () => 0 }, async (base) => {
-    const post = (route, body = {}, cookie = '') => fetch(`${base}/api/usage-analytics?__gd_route=${route}`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json', ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body), redirect: 'manual' });
-    const summary = () => fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`);
+    const post = (route, body = {}, cookie = '') => fetch(`${base}/api/usage-analytics/${route}`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json', ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body), redirect: 'manual' });
+    const summary = (days = 7, cookie = '') => fetch(`${base}/api/usage-analytics/summary?days=${days}`, { headers: cookie ? { cookie } : {} });
     assert.equal((await summary()).status, 401);
     assert.equal((await post('login', { password: 'wrong' })).status, 401);
     const login = await post('login', { password: 'secret' });
@@ -88,11 +99,11 @@ test('analytics login gates summary and logout revokes its Redis token', async (
     const key = redis.values.keys().next().value;
     assert.ok(key); assert.ok(!key.includes(token)); assert.equal(redis.lastSetArgs.at(-1).ex, 43200);
     assert.equal(await redis.get(key), 1);
-    assert.equal((await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`, { headers: { cookie: `gd_analytics=${token}` } })).status, 200);
-    assert.equal((await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=8`, { headers: { cookie: `gd_analytics=${token}` } })).status, 400);
+    assert.equal((await summary(7, `gd_analytics=${token}`)).status, 200);
+    assert.equal((await summary(8, `gd_analytics=${token}`)).status, 400);
     const logout = await post('logout', {}, `gd_analytics=${token}`);
     assert.equal(logout.status, 200); assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
-    assert.equal((await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`, { headers: { cookie: `gd_analytics=${token}` } })).status, 401);
+    assert.equal((await summary(7, `gd_analytics=${token}`)).status, 401);
   });
 });
 
@@ -100,14 +111,14 @@ test('analytics routes return unavailable when Redis operations never settle', a
   const never = () => new Promise(() => {});
   const env = { VERCEL_ENV: 'production', ANALYTICS_PASSWORD: 'secret' };
   await withApi({ redis: { set: never }, env, redisRequestTimeoutMs: 10 }, async (base) => {
-    const response = await fetch(`${base}/api/usage-analytics?__gd_route=login`, {
+    const response = await fetch(`${base}/api/usage-analytics/login`, {
       method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }),
     });
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: 'unavailable' });
   });
   await withApi({ redis: { get: async () => 1, hgetall: never }, env, redisRequestTimeoutMs: 10 }, async (base) => {
-    const response = await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`, {
+    const response = await fetch(`${base}/api/usage-analytics/summary?days=7`, {
       headers: { cookie: `gd_analytics=${'a'.repeat(43)}` },
     });
     assert.equal(response.status, 503);
@@ -131,7 +142,7 @@ test('analytics timeout aborts the pending Upstash request', async () => {
       },
       redisRequestTimeoutMs: 10,
     }, async (base) => {
-      const response = await fetch(`${base}/api/usage-analytics?__gd_route=login`, {
+      const response = await fetch(`${base}/api/usage-analytics/login`, {
         method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }),
       });
       assert.equal(response.status, 503);
