@@ -96,6 +96,25 @@ test('analytics login gates summary and logout revokes its Redis token', async (
   });
 });
 
+test('analytics routes return unavailable when Redis operations never settle', async () => {
+  const never = () => new Promise(() => {});
+  const env = { VERCEL_ENV: 'production', ANALYTICS_PASSWORD: 'secret' };
+  await withApi({ redis: { set: never }, env, redisRequestTimeoutMs: 10 }, async (base) => {
+    const response = await fetch(`${base}/api/usage-analytics?__gd_route=login`, {
+      method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }),
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'unavailable' });
+  });
+  await withApi({ redis: { get: async () => 1, hgetall: never }, env, redisRequestTimeoutMs: 10 }, async (base) => {
+    const response = await fetch(`${base}/api/usage-analytics?__gd_route=summary&days=7`, {
+      headers: { cookie: `gd_analytics=${'a'.repeat(43)}` },
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'unavailable' });
+  });
+});
+
 // This fake implements the script's state transition atomically; it does not run Redis Lua.
 class FakeRedis {
   sessions = new Map();
