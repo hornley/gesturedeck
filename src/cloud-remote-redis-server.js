@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { Redis } from '@upstash/redis';
+import { createRedisClient } from './redis-client.js';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createQrDataUrl } from './qr-code.js';
 
@@ -414,13 +414,6 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) 
 return 0
 `;
 
-function makeRedis(env = process.env) {
-  const url = env.UPSTASH_REDIS_REST_URL ?? env.KV_REST_API_URL;
-  const token = env.UPSTASH_REDIS_REST_TOKEN ?? env.KV_REST_API_TOKEN;
-  if (!url || !token) return null;
-  return new Redis({ url, token });
-}
-
 function sendJson(response, status, value) {
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -694,7 +687,7 @@ function attachCloudWebSocketServer(server, { path, verifyRequest, onConnection 
   };
 }
 
-export function attachRedisCloudRemote(server, { redis = makeRedis(), webSocketFunctionPath } = {}) {
+export function attachRedisCloudRemote(server, { redis = createRedisClient(), webSocketFunctionPath } = {}) {
   const sockets = new Set();
   const localSessions = new Map();
 

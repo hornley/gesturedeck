@@ -9,6 +9,11 @@
   "buildCommand": "npm run build:vercel",
   "outputDirectory": "dist/site",
   "rewrites": [
+    { "source": "/analytics", "destination": "/analytics.html" },
+    { "source": "/api/usage-analytics/event", "destination": "/api/usage-analytics?__gd_route=event" },
+    { "source": "/api/usage-analytics/login", "destination": "/api/usage-analytics?__gd_route=login" },
+    { "source": "/api/usage-analytics/logout", "destination": "/api/usage-analytics?__gd_route=logout" },
+    { "source": "/api/usage-analytics/summary", "destination": "/api/usage-analytics?__gd_route=summary" },
     { "source": "/api/cloud-remote/start", "destination": "/api/cloud-remote?__gd_route=start" },
     { "source": "/api/cloud-remote/renew-invite", "destination": "/api/cloud-remote?__gd_route=renew-invite" },
     { "source": "/api/cloud-remote/stop", "destination": "/api/cloud-remote?__gd_route=stop" },

@@ -118,3 +118,10 @@ GestureDeck controls its sample deck and imported PDFs in the browser. The Chrom
 **Team Cantos Family:** Vienn Yzabel C. Babasa, Harley Albert C. Buendia, Giann Ed Louise C. Garcia, and Wayne Andrei C. Garcia.
 
 OpenAI Codex through Hermes Agent was used for AI-assisted planning, implementation, and documentation.
+
+
+## Analytics setup
+
+Vercel Web Analytics measures anonymous visits to the landing page and presentation workspace. Hosted feature-use events are aggregated and shown on the private `/analytics` page. Set `ANALYTICS_PASSWORD` and the existing `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (or legacy `KV_REST_API_URL` / `KV_REST_API_TOKEN`) in the Vercel production environment. Enable Web Analytics in the Vercel project dashboard, then redeploy.
+
+Feature analytics retain temporary session state for up to 24 hours and daily aggregate counts for 90 days. PDF bytes, filenames, and slide contents stay in the browser. Local and self-hosted usage is not counted.

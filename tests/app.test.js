@@ -135,12 +135,19 @@ async function createPairingHarness({
   setGlobal('window', fakeWindow);
   setGlobal('location', locationState);
   setGlobal('navigator', { clipboard: { writeText: async () => {} } });
+  const sessionValues = new Map();
+  setGlobal('sessionStorage', {
+    getItem: (key) => sessionValues.get(key) ?? null,
+    setItem: (key, value) => sessionValues.set(key, value),
+  });
+  setGlobal('crypto', { randomUUID: () => 'test-usage-session' });
 
   const calls = [];
   let startCount = 0;
   setGlobal('fetch', async (url, options = {}) => {
     const call = { url, options, body: options.body ? JSON.parse(options.body) : undefined };
     calls.push(call);
+    if (url === '/api/usage-analytics/event') return { ok: true, json: async () => ({ ok: true }) };
     if (url === '/api/mobile-remote/interfaces') {
       return { ok: true, json: async () => ({ interfaces: ['192.168.1.20', '10.0.0.4'] }) };
     }
@@ -342,7 +349,11 @@ test('presenter pairing lists phones and disconnects one without affecting the s
 
     socket.message({ type: 'phonePaired' });
     assert.match(elements.get('pairing-status').textContent, /Phone connected/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_connected'));
     await elements.get('disconnect-phone').dispatch('click');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'session_ended'));
     assert.ok(calls.some(({ url, body }) => url === '/api/mobile-remote/stop' && body && Object.keys(body).length === 0));
     assert.equal(socket.readyState, 3);
     assert.equal(elements.get('pairing-status').textContent, 'Disconnected');
@@ -422,19 +433,27 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     canvaSocket.message({ type: 'presenterReady' });
     canvaSocket.message({ type: 'command', id: 'canva-next', action: 'next' });
     await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation'));
     assert.equal(extensionRequests.at(-1).action, 'next');
     assert.equal(elements.get('slide-number').textContent, '01');
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-next', accepted: true });
 
     publishExtensionState({ connected: false, ready: false });
     assert.equal(elements.get('target-status').textContent, 'Canva presentation · Disconnected');
+    const navigationEventsBeforeReject = calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length;
     canvaSocket.message({ type: 'command', id: 'canva-offline', action: 'next' });
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-offline', accepted: false });
+    assert.equal(calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length, navigationEventsBeforeReject);
 
     const pagehideSocket = canvaSocket;
+    canvaSocket.message({ type: 'phonePaired' });
+    await new Promise((resolve) => setImmediate(resolve));
     const stopsBeforePagehide = calls.filter(({ url }) => url === '/api/mobile-remote/stop').length;
     await windowListeners.get('pagehide')?.[0]?.();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(calls.some(({ url, body, options }) => url === '/api/usage-analytics/event' && body?.event === 'session_ended' && options.keepalive));
     assert.equal(calls.filter(({ url }) => url === '/api/mobile-remote/stop').length, stopsBeforePagehide + 1);
     assert.equal(pagehideSocket.readyState, 3);
     assert.equal(elements.get('pairing-url').value, '');

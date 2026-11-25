@@ -11,11 +11,13 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const publicRootFiles = new Set([
   'index.html', 'workspace.html', 'app.js', 'styles.css', 'home.css',
   'mobile-remote.html', 'mobile-remote.css', 'favicon.svg',
+  'analytics.html', 'analytics.css', 'analytics.js',
   'extension/shared/protocol.js', 'extension/shared/page-bridge.js',
 ]);
 const publicDirectories = [
   'src/',
   'assets/',
+  'node_modules/@vercel/analytics/dist/',
   'node_modules/pdfjs-dist/build/',
   'node_modules/pdfjs-dist/cmaps/',
   'node_modules/pdfjs-dist/standard_fonts/',
@@ -76,6 +78,7 @@ export function createAppServer({ root = projectRoot, host = '0.0.0.0' } = {}) {
 
     if (pathname === '/') pathname = '/index.html';
     if (pathname === '/remote') pathname = '/mobile-remote.html';
+    if (pathname === '/analytics') pathname = '/analytics.html';
     if (/^\/r\/[A-Za-z0-9_-]{16}$/.test(pathname)) pathname = '/mobile-remote.html';
     const filePath = path.resolve(resolvedRoot, `.${pathname}`);
     const relativePath = path.relative(resolvedRoot, filePath);

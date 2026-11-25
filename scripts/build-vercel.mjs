@@ -19,11 +19,14 @@ for (const file of [
   'index.html',
   'workspace.html',
   'mobile-remote.html',
+  'analytics.html',
   'home.css',
   'styles.css',
   'mobile-remote.css',
+  'analytics.css',
   'favicon.svg',
   'app.js',
+  'analytics.js',
   'extension/shared/page-bridge.js',
   'extension/shared/protocol.js',
 ]) {
@@ -35,10 +38,13 @@ for (const file of [
   'presentation.js',
   'mobile-remote-client.js',
   'mobile-remote-phone.js',
+  'usage-analytics-client.js',
+  'site-analytics.js',
 ]) {
   await copy(`src/${file}`);
 }
 
+await copy('node_modules/@vercel/analytics/dist/index.mjs');
 await copy('node_modules/pdfjs-dist/build/pdf.mjs');
 await copy('node_modules/pdfjs-dist/build/pdf.worker.mjs');
 await copy('node_modules/pdfjs-dist/cmaps');

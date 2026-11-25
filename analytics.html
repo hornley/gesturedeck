@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f3ed">
+  <title>Usage analytics · GestureDeck</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/analytics.css">
+  <script type="module" src="/analytics.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell analytics-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="GestureDeck home"><span class="brand-mark" aria-hidden="true">G</span><span class="brand-name">Gesture<span>Deck</span></span></a>
+      <span class="analytics-label">Private analytics</span>
+    </header>
+    <main id="main" class="analytics-main">
+      <p class="eyebrow">GESTUREDECK · INTERNAL</p>
+      <h1>Usage analytics</h1>
+      <p class="analytics-intro">A summary of anonymous product usage.</p>
+      <p id="status" class="analytics-status" role="status" aria-live="polite"></p>
+      <section id="login-panel" class="analytics-card" aria-labelledby="login-title">
+        <h2 id="login-title">Sign in</h2>
+        <p>Enter the analytics password to view usage.</p>
+        <form id="login-form">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button class="analytics-button" type="submit">Continue</button>
+        </form>
+      </section>
+      <section id="dashboard" hidden aria-labelledby="dashboard-title">
+        <div class="dashboard-heading">
+          <h2 id="dashboard-title">Overview</h2>
+          <label class="range-control" for="range">Date range
+            <select id="range" name="range">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+          </label>
+        </div>
+        <div id="totals" class="analytics-grid" aria-label="Usage totals"></div>
+        <section class="analytics-card daily-card" aria-labelledby="daily-title">
+          <h3 id="daily-title">Daily activity</h3>
+          <div class="table-scroll"><table><thead><tr><th scope="col">Date</th><th scope="col">PDF imports</th><th scope="col">Phone sessions</th><th scope="col">PDF and phone sessions</th><th scope="col">Phone navigation sessions</th><th scope="col">Completed presentations</th><th scope="col">Presentation time</th></tr></thead><tbody id="daily-rows"></tbody></table></div>
+        </section>
+        <button id="logout" class="analytics-button secondary" type="button">Sign out</button>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
