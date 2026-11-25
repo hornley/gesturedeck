@@ -143,6 +143,7 @@ export async function openPdfPresentation(file, {
             cachedCopy.height = 0;
           }
         } catch {
+          // Cache copies are optional; keep the completed render if allocation fails.
           if (cachedCopy) {
             cachedCopy.width = 0;
             cachedCopy.height = 0;
