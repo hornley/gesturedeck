@@ -115,6 +115,34 @@ test('analytics routes return unavailable when Redis operations never settle', a
   });
 });
 
+test('analytics timeout aborts the pending Upstash request', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestSignal;
+  globalThis.fetch = (url, options = {}) => {
+    if (!String(url).startsWith('https://redis.example.test/')) return originalFetch(url, options);
+    requestSignal = options.signal;
+    return new Promise((_, reject) => requestSignal.addEventListener('abort', () => reject(requestSignal.reason), { once: true }));
+  };
+  try {
+    await withApi({
+      env: {
+        VERCEL_ENV: 'production', ANALYTICS_PASSWORD: 'secret',
+        UPSTASH_REDIS_REST_URL: 'https://redis.example.test', UPSTASH_REDIS_REST_TOKEN: 'test-token',
+      },
+      redisRequestTimeoutMs: 10,
+    }, async (base) => {
+      const response = await fetch(`${base}/api/usage-analytics?__gd_route=login`, {
+        method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }),
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { error: 'unavailable' });
+      assert.equal(requestSignal.aborted, true);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // This fake implements the script's state transition atomically; it does not run Redis Lua.
 class FakeRedis {
   sessions = new Map();
