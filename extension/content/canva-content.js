@@ -6,8 +6,13 @@
     return /\/(?:present|view)(?:\/|$)/.test(location.pathname);
   }
 
+  let lastReportedReady;
+
   function reportReadiness() {
-    void chrome.runtime.sendMessage({ type: 'target-readiness', ready: isPresentationMode() }).catch(() => {});
+    const ready = isPresentationMode();
+    if (ready === lastReportedReady) return;
+    lastReportedReady = ready;
+    void chrome.runtime.sendMessage({ type: 'target-readiness', ready }).catch(() => {});
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

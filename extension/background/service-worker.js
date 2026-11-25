@@ -96,8 +96,8 @@ export function createCanvaExtensionWorker(chromeApi) {
       if (attempt !== connectionAttempt) return getTargetState();
       const result = await chromeApi.tabs.sendMessage(tab.id, { type: 'probe' });
       if (attempt !== connectionAttempt) return getTargetState();
-      if (result?.ready !== true) {
-        return { ...(await getTargetState()), error: 'presentation-required' };
+      if (typeof result?.ready !== 'boolean') {
+        return { ...(await getTargetState()), error: 'canva-unavailable' };
       }
       const previousTabId = targetTabId;
       const previousTargetLoading = targetLoading;
@@ -127,7 +127,12 @@ export function createCanvaExtensionWorker(chromeApi) {
     if (!isCurrentTarget() || !await isReadyTarget()) return false;
     const target = { tabId };
     const keyCode = key === 'ArrowLeft' ? 37 : 39;
-    const keyEvent = (type) => ({ type, key, code: key, windowsVirtualKeyCode: keyCode });
+    const keyEvent = (type) => ({
+      type,
+      key,
+      code: key,
+      windowsVirtualKeyCode: keyCode,
+    });
     await chromeApi.debugger.attach(target, '1.3');
     let keyDownAttempted = false;
     let keyUpSent = false;

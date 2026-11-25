@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outputRoot = path.join(projectRoot, 'dist');
+const outputRoot = path.join(projectRoot, 'dist', 'site');
 
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
@@ -29,22 +29,15 @@ for (const file of [
   'analytics.js',
   'extension/shared/page-bridge.js',
   'extension/shared/protocol.js',
-  'assets/hand_landmarker.task',
 ]) {
   await copy(file);
 }
 
 for (const file of [
-  'camera-session.js',
-  'camera-preview.js',
-  'hand-overlay.js',
-  'hand-tracking.js',
-  'local-hand-tracker.js',
   'pdf-presentation.js',
   'presentation.js',
   'mobile-remote-client.js',
   'mobile-remote-phone.js',
-  'gesture-engine.js',
   'usage-analytics-client.js',
   'site-analytics.js',
 ]) {
@@ -52,12 +45,6 @@ for (const file of [
 }
 
 await copy('node_modules/@vercel/analytics/dist/index.mjs');
-await copy(
-  'node_modules/@mediapipe/tasks-vision/vision_bundle.mjs',
-);
-await copy(
-  'node_modules/@mediapipe/tasks-vision/wasm',
-);
 await copy('node_modules/pdfjs-dist/build/pdf.mjs');
 await copy('node_modules/pdfjs-dist/build/pdf.worker.mjs');
 await copy('node_modules/pdfjs-dist/cmaps');

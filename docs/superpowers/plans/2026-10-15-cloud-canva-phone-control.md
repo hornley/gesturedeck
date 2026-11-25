@@ -173,5 +173,4 @@ git commit -m "fix: preserve selected target in hosted sessions"
 - The production bridge origin is exactly `https://gesturedeck-two.vercel.app`; Vercel previews and custom domains remain unsupported.
 - Local loopback extension and phone paths remain available.
 - Hosted phone capacity stays at eight; this change does not alter invite, lease, expiry, or device identity rules.
-- Canva exposes only readiness and Previous/Next; `goTo`, slide numbers, slide content, camera data, and Canva credentials do not cross the relay.
 - The reported Tailscale `ws://100.117.61.110:5173` failure remains separate from this hosted path.

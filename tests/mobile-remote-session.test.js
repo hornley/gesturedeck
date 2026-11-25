@@ -174,6 +174,9 @@ test('every paired phone can navigate and the presenter can remove one phone wit
   const firstCommand = { type: 'command', id: 'first-next', action: 'next' };
   const secondCommand = { type: 'command', id: 'second-next', action: 'next' };
   harness.session.handlePhoneMessage(first.phoneSocket, firstCommand);
+  assert.equal(harness.session.handlePresenterMessage(harness.presenterSocket, {
+    type: 'commandAck', id: harness.presenterSocket.messages.at(-1).id, accepted: true,
+  }), true);
   harness.session.handlePhoneMessage(second.phoneSocket, secondCommand);
 
   const forwarded = harness.presenterSocket.messages.filter(({ type }) => type === 'command');
@@ -408,7 +411,12 @@ test('valid commands are forwarded in a minimal shape and state updates expose o
     { type: 'command', id: 'next-id', action: 'next' },
     { type: 'command', id: 'go-to-id', action: 'goTo', index: 2 },
   ];
-  for (const command of commands) harness.session.handlePhoneMessage(phoneSocket, command);
+  for (const command of commands) {
+    harness.session.handlePhoneMessage(phoneSocket, command);
+    assert.equal(harness.session.handlePresenterMessage(harness.presenterSocket, {
+      type: 'commandAck', id: harness.presenterSocket.messages.at(-1).id, accepted: true,
+    }), true);
+  }
   const forwarded = harness.presenterSocket.messages.slice(initialPresenterMessages);
   assert.deepEqual(
     forwarded.map(({ type, action, index }) => ({ type, action, index })),
@@ -420,7 +428,7 @@ test('valid commands are forwarded in a minimal shape and state updates expose o
   assert.deepEqual(phoneSocket.messages.at(-1), { type: 'state', index: 2, total: 3, busy: false });
   assert.equal(harness.session.publishState({ index: 3, total: 3, busy: false }), false);
   assert.equal(harness.session.handlePresenterMessage(harness.presenterSocket, {
-    type: 'state', index: 1, total: 3, busy: true, slideText: 'secret', landmarks: [1, 2, 3],
+    type: 'state', index: 1, total: 3, busy: true, slideText: 'secret', privateData: [1, 2, 3],
   }), true);
   assert.deepEqual(phoneSocket.messages.at(-1), { type: 'state', index: 1, total: 3, busy: true });
 });
@@ -458,6 +466,37 @@ test('busy state rejects commands locally and the result can be replayed', () =>
   assert.deepEqual(phoneSocket.messages.at(-1), ack);
   harness.session.handlePhoneMessage(phoneSocket, command);
   assert.deepEqual(phoneSocket.messages.at(-1), ack);
+});
+
+test('a pending presenter command blocks other phones even after its sender disconnects', () => {
+  const harness = createHarness();
+  const first = pair(harness);
+  const second = pair(harness);
+  const forwardedCommands = () => harness.presenterSocket.messages.filter(({ type }) => type === 'command');
+
+  harness.session.handlePhoneMessage(first.phoneSocket, { type: 'command', id: 'first-command', action: 'next' });
+  const firstCommand = { type: 'command', id: 'phone-id-one.1', action: 'next' };
+  assert.deepEqual(forwardedCommands(), [firstCommand]);
+
+  assert.equal(harness.session.handlePhoneMessage(first.phoneSocket, { type: 'disconnect' }), true);
+  assert.equal(first.phoneSocket.readyState, 3);
+  assert.equal(harness.session.handlePresenterMessage(harness.presenterSocket, {
+    type: 'commandAck', id: 'wrong-id', accepted: true,
+  }), false);
+  harness.session.handlePhoneMessage(second.phoneSocket, { type: 'command', id: 'blocked-command', action: 'previous' });
+  assert.deepEqual(second.phoneSocket.messages.at(-1), {
+    type: 'commandAck', id: 'blocked-command', accepted: false,
+  });
+  assert.deepEqual(forwardedCommands(), [firstCommand]);
+
+  assert.equal(harness.session.handlePresenterMessage(harness.presenterSocket, {
+    type: 'commandAck', id: firstCommand.id, accepted: true,
+  }), true);
+  harness.session.handlePhoneMessage(second.phoneSocket, { type: 'command', id: 'next-command', action: 'next' });
+  assert.equal(forwardedCommands().length, 2);
+  assert.deepEqual(forwardedCommands().at(-1), {
+    type: 'command', id: 'phone-id-two.3', action: 'next',
+  });
 });
 
 test('deduplicates pending commands, replays completed acknowledgements, and rejects conflicting ID reuse', () => {

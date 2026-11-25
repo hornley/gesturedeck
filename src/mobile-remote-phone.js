@@ -50,6 +50,8 @@ function detectDeviceType(userAgent) {
 const PAIR_ERRORS = {
   expired: 'This pairing link has expired. Ask the presenter for a fresh link.',
   invalid: 'This pairing link is invalid. Scan a fresh QR code or open the latest link.',
+  'session-missing': 'This presentation session is no longer available. Ask the presenter to start a new session and share its link.',
+  'session-ended': 'The presenter ended this session. Ask for a link from a new session.',
   'already-paired': 'This hosted presentation already has a phone connected. Disconnect it before pairing another phone.',
   'session-full': 'This presentation already has eight phones. Try again after someone disconnects a phone.',
   'host-unavailable': 'GestureDeck is not ready to pair. Ask the presenter to reconnect the remote.',
@@ -412,7 +414,9 @@ export function mountMobileRemotePhone({
       && typeof message.id === 'string' && pendingCommands.delete(message.id)
       && typeof message.accepted === 'boolean') {
       actionStatus.textContent = message.accepted
-        ? 'Command accepted by presenter.'
+        ? currentState?.target === 'canva'
+          ? 'Navigation sent to Canva.'
+          : 'Command accepted by presenter.'
         : 'Command was not accepted. Check the presentation connection and try again.';
       return;
     }
@@ -435,7 +439,7 @@ export function mountMobileRemotePhone({
           ? 'Waiting for a connection to remove this phone…'
           : 'Disconnected. Reconnecting…', 'error');
         scheduleRetry();
-      } else showRecovery('Could not connect. Check the local Wi-Fi connection, then tap Connect to try again.', 'connection-failed');
+      } else showRecovery('Could not connect. Check the local network connection, then tap Connect to try again.', 'connection-failed');
       return;
     }
     socket = nextSocket;
@@ -477,7 +481,7 @@ export function mountMobileRemotePhone({
           ? 'Waiting for a connection to remove this phone…'
           : 'Disconnected. Reconnecting…', 'error');
         scheduleRetry();
-      } else showRecovery('Connection closed. Check the Wi-Fi connection, then tap Connect to try again.', 'connection-closed');
+      } else showRecovery('Connection closed. Check the network connection, then tap Connect to try again.', 'connection-closed');
     };
   }
 

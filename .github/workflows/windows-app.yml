@@ -1,0 +1,69 @@
+name: Windows portable app
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-app:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:windows
+      - name: Smoke test packaged app
+        shell: pwsh
+        run: |
+          $app = Get-ChildItem dist/windows/GestureDeck-*-portable-x64.exe | Select-Object -First 1
+          if (-not $app) { throw 'Portable executable was not produced.' }
+          $process = Start-Process -FilePath $app.FullName -PassThru
+          $windowProcess = $null
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              try {
+                $response = Invoke-WebRequest -Uri http://127.0.0.1:5173/workspace.html -UseBasicParsing -TimeoutSec 2
+                if ($response.StatusCode -eq 200) { $ready = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Packaged app did not serve workspace.html with HTTP 200.' }
+            for ($i = 0; $i -lt 15 -and -not $windowProcess; $i++) {
+              $windowProcess = Get-Process -Name GestureDeck -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+              if (-not $windowProcess) { Start-Sleep -Seconds 1 }
+            }
+            if (-not $windowProcess) { throw 'Packaged app did not open a GestureDeck window.' }
+            $windowProcess.CloseMainWindow() | Out-Null
+            if (-not $windowProcess.WaitForExit(10000)) { throw 'GestureDeck window did not close normally.' }
+            if (-not $process.WaitForExit(10000)) { throw 'Portable launcher did not exit after GestureDeck closed.' }
+          } finally {
+            if (-not $windowProcess) {
+              $windowProcess = Get-Process -Name GestureDeck -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+            }
+            if ($windowProcess -and -not $windowProcess.HasExited) {
+              $windowProcess.CloseMainWindow() | Out-Null
+              if (-not $windowProcess.WaitForExit(10000)) { throw 'GestureDeck window did not close normally.' }
+            }
+            if (-not $process.HasExited -and -not $process.WaitForExit(10000)) { throw 'Portable launcher did not exit.' }
+          }
+          $released = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            $client = [System.Net.Sockets.TcpClient]::new()
+            try { $client.Connect('127.0.0.1', 5173) }
+            catch { $released = $true; break }
+            finally { $client.Dispose() }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $released) { throw 'Packaged app did not release port 5173.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GestureDeck-Windows-x64
+          path: dist/windows/*.exe
+          if-no-files-found: error

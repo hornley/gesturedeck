@@ -23,6 +23,7 @@ const autoStartCloudPairing = cloudExperience
 const elements = {
   previousSlide: $('previous-slide'),
   nextSlide: $('next-slide'),
+  actionToast: $('action-toast'),
   slideNumber: $('slide-number'),
   slideCount: $('slide-count'),
   slideKicker: $('slide-kicker'),
@@ -32,7 +33,7 @@ const elements = {
   progressFill: $('progress-fill'),
   progressTrack: $('deck-progress'),
   deckVisual: $('deck-visual'),
-  actionToast: $('action-toast'),
+  targetStatus: $('target-status'),
   openPdf: $('open-pdf'),
   pdfFile: $('pdf-file'),
   sampleDeck: $('sample-deck'),
@@ -74,16 +75,16 @@ const elements = {
 
 const slides = [
   {
-    kicker: 'GESTUREDECK / A LOCAL-FIRST REMOTE',
+    kicker: 'GESTUREDECK / A LOCAL-FIRST WORKSPACE',
     title: 'Move the room.\nNot the laptop.',
-    copy: 'A quiet phone remote keeps your place in the presentation and your attention on the room.',
+    copy: 'Keep your place in the presentation with keyboard controls or a paired phone.',
     accent: 'lime',
     motif: 'orbit',
   },
   {
     kicker: '01 / STAY IN FLOW',
     title: 'Keep your attention\nwhere it belongs.',
-    copy: 'Advance or return from your phone or keyboard without breaking the conversation.',
+    copy: 'Move between slides with the arrow keys or use your phone as a remote.',
     accent: 'violet',
     motif: 'beam',
   },
@@ -96,8 +97,8 @@ const slides = [
   },
   {
     kicker: '03 / PRIVATE BY DEFAULT',
-    title: 'Your slides stay\nwith you.',
-    copy: 'Phone relays carry navigation state, not your PDF files or rendered slides.',
+    title: 'Your slides stay\nclose at hand.',
+    copy: 'Present a sample deck or a PDF, with local or hosted phone controls when you need them.',
     accent: 'blue',
     motif: 'signal',
   },
@@ -113,6 +114,7 @@ let remoteStarting = false;
 let remoteAuthenticated = false;
 let presenterConnectionRejected = false;
 let remoteGeneration = 0;
+// Keep stop requests distinct across replacements and coalesce duplicates for one session.
 let activeRemoteSessionKey = 0;
 let remoteStopPromise = null;
 const remoteStopRequests = new Map();
@@ -125,17 +127,9 @@ let pageIsHiding = false;
 let canvaTarget = { connected: false, ready: false };
 let phoneRemoteTarget = null;
 const state = {
-  toastTimer: null,
-  pdf: null,
-  pdfName: '',
-  pdfImportToken: 0,
-  pdfRenderToken: 0,
-  pdfRendering: false,
-  lastRenderedPdfIndex: 0,
-  fullscreenHideTimer: null,
-  wasPdfFullscreen: false,
+  pdf: null, pdfName: '', pdfImportToken: 0, pdfRenderToken: 0, pdfRendering: false,
+  lastRenderedPdfIndex: 0, fullscreenHideTimer: null, actionToastTimer: null, wasPdfFullscreen: false,
 };
-
 function show(element, visible) {
   if (element) element.hidden = !visible;
 }
@@ -240,12 +234,28 @@ function syncPdfFullscreen() {
   if (state.pdf) void renderPdfPage(presentation.getSnapshot().index);
 }
 
+function renderTargetStatus() {
+  const target = remoteActive ? phoneRemoteTarget : canvaTarget.connected ? 'canva' : 'local';
+  if (target === 'canva') {
+    const status = canvaTarget.connected
+      ? canvaTarget.ready ? 'Connected' : 'Not ready'
+      : 'Disconnected';
+    setText(elements.targetStatus, `Canva presentation · ${status}`);
+    return;
+  }
+  setText(elements.targetStatus, state.pdf ? 'Imported PDF · browser demo' : 'Sample deck · browser demo');
+}
+
 function updateCanvaTarget(nextState) {
-  canvaTarget = {
+  const normalizedState = {
     connected: nextState?.connected === true,
     ready: nextState?.connected === true && nextState?.ready === true,
   };
-  if (remoteActive && phoneRemoteTarget === 'canva') publishRemoteState();
+  const changed = normalizedState.connected !== canvaTarget.connected
+    || normalizedState.ready !== canvaTarget.ready;
+  canvaTarget = normalizedState;
+  renderTargetStatus();
+  if (changed && remoteActive && phoneRemoteTarget === 'canva') publishRemoteState();
 }
 
 function renderSourceUi() {
@@ -263,6 +273,7 @@ function renderSourceUi() {
   setText(elements.deckHeading, pdfActive ? state.pdfName : cloudExperience ? 'Sample deck' : 'Field notes on presence');
   setText(elements.deckEyebrow, pdfActive ? 'YOUR PDF' : 'SAMPLE DECK');
   setText(elements.deckFormatLabel, pdfActive ? 'PDF · Local file' : 'Browser · Sample deck');
+  renderTargetStatus();
   if (elements.deckVisual) {
     elements.deckVisual.dataset.source = pdfActive ? 'pdf' : 'sample';
     if (pdfActive) {
@@ -341,11 +352,8 @@ function renderSlide({ renderPdf = true } = {}) {
 function showActionToast(message) {
   setText(elements.actionToast, message);
   show(elements.actionToast, true);
-  if (state.toastTimer !== null) clearTimeout(state.toastTimer);
-  state.toastTimer = setTimeout(() => {
-    show(elements.actionToast, false);
-    state.toastTimer = null;
-  }, 1400);
+  clearTimeout(state.actionToastTimer);
+  state.actionToastTimer = setTimeout(() => show(elements.actionToast, false), 1400);
 }
 
 export function announceAction(action) {
@@ -404,15 +412,16 @@ function handleRemoteCommand(command) {
     return goToSlide(command.index, 'remote');
   }
   if ((command.action === 'previous' || command.action === 'next')
-    && Object.keys(command).join(',') === 'action') return announceAction(command.action);
+    && Object.keys(command).join(',') === 'action') return announceAction(command.action, 'remote');
   return false;
 }
 
 /** Connect after /api/mobile-remote/start returns its hostCredential. */
-export function connectMobileRemote({ hostCredential, WebSocketImpl, onConnection, path } = {}) {
+export function connectMobileRemote({ hostCredential, WebSocketImpl, onConnection, path, autoReconnect = false } = {}) {
   mobileRemoteClient?.close();
   mobileRemoteClient = createMobileRemoteClient({
     hostCredential, WebSocketImpl, onConnection, path,
+    autoReconnect,
     onCommand: (command) => {
       const accepted = handleRemoteCommand(command);
       if (accepted && typeof accepted.then === 'function') {
@@ -421,7 +430,7 @@ export function connectMobileRemote({ hostCredential, WebSocketImpl, onConnectio
           return result;
         });
       }
-      if (accepted) void trackUsageEvent('phone_navigation');
+      if (accepted === true) void trackUsageEvent('phone_navigation');
       return accepted;
     },
     location: window.location,
@@ -560,6 +569,7 @@ function resetPairingUi() {
   renderPairedPhones([]);
   setPairingStatus('Disconnected');
   updatePairingStartButton();
+  renderTargetStatus();
 }
 
 function restorePairingFocus() {
@@ -595,7 +605,7 @@ async function loadPairingInterfaces() {
     if (!remoteActive && !remoteStarting) {
       setPairingStatus(addresses.length
         ? 'Disconnected'
-        : 'No private network interface is available. Connect this computer and your phone to the same local network.');
+        : 'No private network interface is available. Connect the laptop and phone to the same local network. iPhone Hotspot works only if the phone can reach the laptop.');
     }
   } catch (error) {
     elements.pairingInterface.disabled = true;
@@ -637,6 +647,10 @@ function handleMobileRemoteConnection(event, generation) {
     renderPairedPhones(pairedPhones);
     return;
   }
+  if (event.type === 'reconnecting') {
+    setPairingStatus('Presenter disconnected. Reconnecting…');
+    return;
+  }
   if (event.type === 'phonePaired') {
     phoneConnectedForSession = true;
     void trackUsageEvent('phone_connected');
@@ -658,12 +672,15 @@ function handleMobileRemoteConnection(event, generation) {
   if (event.type === 'rejected') {
     clearPairingMaterial();
     presenterConnectionRejected = true;
-    const rejectionMessage = event.reason === 'already-connected'
-      ? 'The presenter session was rejected as already in use (`already-connected`). Disconnect all, then create a new session.'
-      : event.reason === 'invalid-credential'
-        ? 'The presenter session could not be verified (`invalid-credential`). Disconnect all, then create a new session.'
-        : 'The presenter connection was rejected. Disconnect all, then create a new session.';
-    setPairingStatus(rejectionMessage);
+    const rejectionMessages = {
+      'already-connected': 'The presenter session was rejected as already in use (`already-connected`). Disconnect all, then create a new session.',
+      'invalid-credential': 'The presenter session could not be verified (`invalid-credential`). Disconnect all, then create a new session.',
+      'session-missing': 'The presenter session could not be found (`session-missing`). Disconnect all, then create a new session.',
+      'session-ended': 'The presenter session has ended (`session-ended`). Disconnect all, then create a new session.',
+      'invalid-session-state': 'The presenter session state could not be read (`invalid-session-state`). Disconnect all, then create a new session.',
+    };
+    setPairingStatus(rejectionMessages[event.reason]
+      ?? 'The presenter connection was rejected. Disconnect all, then create a new session.');
     return;
   }
   if (event.type === 'closed' || event.type === 'sessionEnded') {
@@ -705,6 +722,7 @@ async function startMobileRemote() {
     });
     serverStarted = true;
     if (generation !== remoteGeneration) {
+      // stopMobileRemote already queued cleanup when it invalidated this start.
       return;
     }
     if (typeof result.hostCredential !== 'string' || !result.hostCredential
@@ -716,6 +734,7 @@ async function startMobileRemote() {
     remoteStarting = false;
     remoteActive = true;
     phoneRemoteTarget = target;
+    renderTargetStatus();
     show(elements.disconnectPhone, true);
     setPairingStatus('Waiting for the presenter connection…');
     updatePairingStartButton();
@@ -732,6 +751,7 @@ async function startMobileRemote() {
     remoteActive = false;
     remoteAuthenticated = false;
     phoneRemoteTarget = null;
+    renderTargetStatus();
     clearPairingMaterial();
     show(elements.newPairingLink, false);
     show(elements.disconnectPhone, false);
@@ -772,13 +792,15 @@ async function startCloudMobileRemote() {
     remoteStarting = false;
     phoneRemoteTarget = initialPhoneRemoteTarget;
     remoteActive = true;
-      show(elements.disconnectPhone, true);
+    renderTargetStatus();
+    show(elements.disconnectPhone, true);
     updatePairingStartButton();
     setPairingStatus('Waiting for the presenter connection…');
     const path = `/api/cloud-remote-ws?__gd_route=presenter&session=${encodeURIComponent(result.sessionId)}`;
     mobileRemoteClient = connectMobileRemote({
       hostCredential: result.hostCredential,
       path,
+      autoReconnect: true,
       onConnection: (event) => handleMobileRemoteConnection(event, generation),
     });
   } catch (error) {
@@ -801,7 +823,8 @@ async function startCloudMobileRemote() {
     remoteAuthenticated = false;
     cloudRemoteSession = null;
     phoneRemoteTarget = null;
-      clearPairingMaterial();
+    renderTargetStatus();
+    clearPairingMaterial();
     show(elements.newPairingLink, false);
     show(elements.disconnectPhone, false);
     updatePairingStartButton();
@@ -844,10 +867,8 @@ async function renewPairingInvite() {
 }
 
 async function stopMobileRemote({ keepalive = false, force = false, stopSession = true } = {}) {
-  if (phoneConnectedForSession) {
-    phoneConnectedForSession = false;
-    void trackUsageEvent('session_ended', { keepalive });
-  }
+  if (phoneConnectedForSession && stopSession) void trackUsageEvent('session_ended', { keepalive });
+  phoneConnectedForSession = false;
   const shouldPostStop = stopSession && (force || remoteActive || remoteStarting);
   ++remoteGeneration;
   closingMobileRemote = true;
@@ -1038,20 +1059,20 @@ void canvaExtensionBridge.requestStatus().then((targetState) => {
   updateCanvaTarget(targetState);
   if (!autoStartCloudPairing) return;
 
-  if (targetState?.connected === true && targetState?.ready === true) {
+  if (targetState?.connected === true) {
     openPairingDialog();
     return;
   }
 
   openPairingDialog({ startCloudSession: false });
-  setPairingStatus('Canva is not ready. Connect a presentation in Present or View mode, then open phone pairing again.');
+  setPairingStatus('Connect Canva in the extension first, then open phone pairing again.');
 });
 
 bindEvents();
 if (cloudExperience) {
   document.documentElement.dataset.experience = 'cloud';
   setText($('page-title'), 'Present with your phone.');
-  setText(document.querySelector('.welcome-description'), 'Choose a PDF, pair your phone, and present.');
+  setText(document.querySelector('.welcome-description'), 'Choose a PDF, pair your phone, and present with the left and right arrow keys.');
   setText(elements.connectPhone?.querySelector('.deck-choice-copy strong'), 'Connect phone');
   setText(elements.connectPhone?.querySelector('.deck-choice-copy span'), 'Pair to this presentation');
   setText($('pairing-dialog-eyebrow'), 'PHONE REMOTE');

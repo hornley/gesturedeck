@@ -1,13 +1,13 @@
 :root {
   color-scheme: light;
-  --paper: #f5f3ed;
-  --surface: #fbfaf6;
-  --ink: #292d28;
-  --muted: #6d7168;
-  --line: #deded5;
-  --olive: #627257;
-  --olive-dark: #4b5a43;
-  --rust: #a54f37;
+  --paper: oklch(96% .014 84);
+  --surface: oklch(98% .009 84);
+  --ink: oklch(29% .018 75);
+  --muted: oklch(50% .018 80);
+  --line: oklch(88% .018 84);
+  --olive: oklch(52% .055 139);
+  --olive-dark: oklch(40% .055 139);
+  --rust: oklch(53% .12 38);
   --serif: 'Newsreader', Georgia, serif;
   --sans: 'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -181,8 +181,7 @@ h1, h2 { font-family: var(--serif); font-weight: 400; letter-spacing: -.055em; }
   border: 1px solid #e1e2d7;
   border-radius: 4px;
   background: #e9eade;
-  box-shadow: 0 22px 52px #36392d19, 0 3px 8px #36392d0a;
-  transform: rotate(-2deg);
+  box-shadow: 0 5px 16px #36392d10;
 }
 
 .slide-topline, .slide-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #777c70; font-size: 6px; font-weight: 700; letter-spacing: .12em; }
@@ -211,8 +210,10 @@ h1, h2 { font-family: var(--serif); font-weight: 400; letter-spacing: -.055em; }
   border-radius: 17px;
   background: #343a33;
   box-shadow: 0 12px 26px #292d2845;
-  transform: rotate(4deg);
+  transform: none;
 }
+
+.preview-halo { display: none; }
 
 .phone-speaker { position: absolute; top: 4px; left: 50%; width: 24px; height: 3px; border-radius: 5px; background: #697064; transform: translateX(-50%); }
 .phone-screen { height: 100%; display: flex; flex-direction: column; padding: 12px 6px 7px; border-radius: 10px; background: #faf9f4; }

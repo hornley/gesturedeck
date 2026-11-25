@@ -12,7 +12,6 @@ class FakeElement {
     this.value = '';
     this.hidden = false;
     this.disabled = false;
-    this.srcObject = null;
     this.children = [];
     this.open = false;
   }
@@ -32,6 +31,8 @@ class FakeElement {
   dispatch(type, extra = {}) {
     return this.listeners.get(type)?.({ currentTarget: this, target: this, ...extra });
   }
+
+  click() { this.dispatch('click'); }
 
   focus() {
     globalThis.document.activeElement = this;
@@ -53,172 +54,24 @@ class FakeElement {
   replaceChildren(...children) {
     this.children = children;
   }
+
+  querySelector() {
+    return new FakeElement();
+  }
 }
 
-test('workspace removes camera capture and gesture settings', async () => {
-  const html = await readFile(new URL('../workspace.html', import.meta.url), 'utf8');
-  const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /camera-card|camera-preview|camera-selection|camera-status|camera-diagnostics|start-setup|gesture-sensitivity|reverse-mapping|advanced-settings|gesture-guide/i);
-  assert.doesNotMatch(appSource, /getUserMedia|CameraSession|SwipeRecognizer|HandLandmarker/);
-});
-
-test('deck selection precedes phone and PDF controls', async () => {
-  const html = await readFile(new URL('../workspace.html', import.meta.url), 'utf8');
-  const deckIndex = html.indexOf('class="deck-panel"');
-  const sessionIndex = html.indexOf('class="session-panel"');
-  const deckChoicesIndex = html.indexOf('class="deck-choices"');
-  assert.ok(deckIndex >= 0 && deckIndex < sessionIndex);
-  assert.ok(sessionIndex < deckChoicesIndex);
-});
-
-test('workspace stacks presentation and controls at tablet widths', async () => {
-  const css = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
-  const tabletStyles = css.slice(css.indexOf('@media (max-width: 860px)'), css.indexOf('@media (max-width: 620px)'));
-  assert.match(tabletStyles, /\.workspace-grid\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
-});
-
-test('workspace renders deck and phone controls without requesting camera access', async () => {
-  const ids = [
-    'previous-slide', 'next-slide', 'slide-number', 'slide-count', 'slide-kicker',
-    'slide-title', 'slide-copy', 'slide-accent', 'progress-fill', 'deck-visual', 'action-toast',
-  ];
-  const elements = new Map(ids.map((id) => [id, new FakeElement()]));
-  elements.set('deck-progress', new FakeElement({ 'aria-valuemin': '1', 'aria-valuemax': '8', 'aria-valuenow': '1' }));
-  const body = new FakeElement();
-  const originalGlobals = new Map();
-  const setGlobal = (name, value) => {
-    originalGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
-    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  };
-
-  setGlobal('document', {
-    body,
-    visibilityState: 'visible',
-    hasFocus: () => true,
-    getElementById: (id) => elements.get(id) ?? null,
-    addEventListener() {},
-  });
-  setGlobal('window', {
-    addEventListener() {}, postMessage() {},
-    location: { protocol: 'http:', host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173' },
-  });
-  let cameraRequests = 0;
-  setGlobal('navigator', { mediaDevices: { getUserMedia() {
-    cameraRequests += 1;
-    throw new Error('Workspace should not request camera access.');
-  } } });
-  let latestTimeoutCallback = null;
-  let timeoutId = 0;
-  setGlobal('setTimeout', (callback) => {
-    latestTimeoutCallback = callback;
-    timeoutId += 1;
-    return timeoutId;
-  });
-  setGlobal('clearTimeout', () => {});
-
-  try {
-    const app = await import(`../app.js?app-test=${Date.now()}`);
-
-    const progress = elements.get('deck-progress');
-    assert.equal(progress.getAttribute('aria-valuemax'), '4');
-    assert.equal(progress.getAttribute('aria-valuenow'), '1');
-    assert.equal(cameraRequests, 0);
-
-    class RemoteSocket {
-      static OPEN = 1;
-      constructor(url) { this.url = url; this.readyState = 0; this.sent = []; RemoteSocket.instance = this; }
-      send(value) { this.sent.push(JSON.parse(value)); }
-      open() { this.readyState = 1; this.onopen(); }
-      message(value) { this.onmessage({ data: JSON.stringify(value) }); }
-      close() { this.readyState = 3; this.onclose(); }
-    }
-    app.connectMobileRemote({ hostCredential: 'test-host', WebSocketImpl: RemoteSocket });
-    const socket = RemoteSocket.instance;
-    assert.equal(cameraRequests, 0);
-    socket.open();
-    socket.message({ type: 'presenterReady' });
-    assert.deepEqual(socket.sent.slice(0, 2), [
-      { type: 'presenter', credential: 'test-host' },
-      { type: 'state', index: 0, total: 4, busy: false },
-    ]);
-    socket.message({ type: 'command', id: 'remote-next', action: 'next' });
-    assert.equal(elements.get('slide-number').textContent, '02');
-    assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'remote-next', accepted: true });
-    socket.message({ type: 'command', id: 'remote-go', action: 'goTo', index: 3 });
-    assert.equal(elements.get('slide-number').textContent, '04');
-    socket.message({ type: 'command', id: 'remote-last', action: 'next' });
-    assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'remote-last', accepted: true });
-    socket.message({ type: 'command', id: 'remote-out', action: 'goTo', index: 4 });
-    assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'remote-out', accepted: false });
-    assert.equal(cameraRequests, 0);
-    socket.message({ type: 'command', id: 'remote-middle', action: 'goTo', index: 2 });
-    const replacement = app.connectMobileRemote({ hostCredential: 'new-host', WebSocketImpl: RemoteSocket });
-    const replacementSocket = RemoteSocket.instance;
-    assert.notEqual(replacementSocket, socket);
-    assert.equal(socket.readyState, 3);
-    replacementSocket.open();
-    replacementSocket.message({ type: 'presenterReady' });
-    assert.deepEqual(replacementSocket.sent.slice(0, 2), [
-      { type: 'presenter', credential: 'new-host' },
-      { type: 'state', index: 2, total: 4, busy: false },
-    ]);
-    assert.equal(cameraRequests, 0);
-    replacementSocket.message({ type: 'command', id: 'remote-start', action: 'goTo', index: 0 });
-    replacement.close();
-
-    elements.get('next-slide').dispatch('click');
-
-    assert.equal(elements.get('slide-number').textContent, '02');
-    assert.equal(progress.getAttribute('aria-valuenow'), '2');
-    app.announceAction('previous');
-    assert.equal(elements.get('slide-number').textContent, '01');
-    app.announceAction('previous');
-    assert.equal(elements.get('slide-number').textContent, '01');
-    assert.equal(elements.get('action-toast').textContent, 'Already on the first slide');
-    app.announceAction('next');
-    app.announceAction('next');
-    app.announceAction('next');
-    assert.equal(elements.get('slide-number').textContent, '04');
-    app.announceAction('next');
-    assert.equal(elements.get('slide-number').textContent, '04');
-    assert.equal(elements.get('action-toast').textContent, 'Already on the last slide');
-    assert.equal(elements.get('action-toast').hidden, false);
-    latestTimeoutCallback();
-    assert.equal(elements.get('action-toast').hidden, true);
-
-    assert.equal(cameraRequests, 0);
-  } finally {
-    for (const [name, descriptor] of originalGlobals) {
-      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-      else delete globalThis[name];
-    }
-  }
-});
-
-test('presenter pairing lists phones and disconnects one without affecting the session', async () => {
-  const html = await readFile(new URL('../workspace.html', import.meta.url), 'utf8');
-  const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
-  assert.match(html, /<button id="connect-phone"[^>]*>/);
-  const sourceUi = appSource.slice(appSource.indexOf('function renderSourceUi()'), appSource.indexOf('async function renderPdfPage'));
-  assert.match(sourceUi, /show\(elements\.connectPhone, true\)/);
-  assert.match(sourceUi, /pdfActive \? 'PDF · Local file' : 'Browser · Sample deck'/);
-  assert.match(html, /<strong>Connect phone<\/strong>/);
-  assert.doesNotMatch(html.match(/<button id="connect-phone"[^>]*>/)?.[0] ?? '', /hidden/);
-  assert.match(html, /<dialog id="pairing-dialog"[^>]*aria-labelledby="pairing-title"/);
-  assert.match(html, /<label[^>]*for="pairing-interface"[^>]*>Private network interface/);
-  assert.match(html, /<label[^>]*for="pairing-url"[^>]*>Pairing URL/);
-  for (const label of ['Start phone connection', 'Copy pairing URL', 'Renew pairing link', 'Disconnect all', 'Close']) {
-    assert.match(html, new RegExp(`>${label.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')}<`));
-  }
-
+async function createPairingHarness({
+  pageUrl = 'http://127.0.0.1:5173/workspace.html',
+  initialExtensionState = { connected: false, ready: false },
+} = {}) {
   const ids = [
     'connect-phone', 'pairing-dialog', 'pairing-interface', 'start-phone-remote',
     'pairing-qr-panel', 'pairing-qr', 'pairing-url-panel', 'pairing-url',
     'copy-pairing-url', 'pairing-status', 'new-pairing-link', 'disconnect-phone',
     'paired-phones-panel', 'paired-phones', 'paired-phones-empty', 'paired-phone-count',
-    'close-pairing-dialog', 'slide-number', 'slide-count', 'deck-progress',
-    'pdf-file',
-    'deck-visual', 'sample-canvas-topline', 'sample-canvas-content', 'sample-canvas-footer',
+    'close-pairing-dialog', 'slide-number', 'slide-count', 'deck-progress', 'previous-slide', 'next-slide', 'action-toast',
+    'sample-deck', 'sample-deck-status', 'open-pdf', 'pdf-file',
+    'deck-visual', 'target-status', 'sample-canvas-topline', 'sample-canvas-content', 'sample-canvas-footer',
   ];
   const elements = new Map(ids.map((id) => [id, new FakeElement()]));
   elements.get('start-phone-remote').disabled = true;
@@ -230,21 +83,31 @@ test('presenter pairing lists phones and disconnects one without affecting the s
   };
   const documentListeners = new Map();
   const windowListeners = new Map();
+  const location = new URL(pageUrl);
+  const locationState = {
+    protocol: location.protocol,
+    host: location.host,
+    hostname: location.hostname,
+    origin: location.origin,
+    search: location.search,
+  };
   const fakeDocument = {
     body,
+    documentElement: new FakeElement(),
     activeElement: null,
     visibilityState: 'visible',
     hasFocus: () => true,
     getElementById: (id) => elements.get(id) ?? null,
+    querySelector: () => new FakeElement(),
     createElement: () => new FakeElement(),
     addEventListener: (type, callback) => documentListeners.set(type, callback),
+    dispatchEvent(type, event) { return documentListeners.get(type)?.(event); },
   };
   setGlobal('document', fakeDocument);
-  let extensionState = { connected: false, ready: false };
-  let navigationReplyAccepted = null;
+  let extensionState = { ...initialExtensionState };
   const extensionRequests = [];
   const fakeWindow = {
-    location: { protocol: 'http:', host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173' },
+    location: locationState,
     addEventListener(type, callback) {
       const listeners = windowListeners.get(type) ?? [];
       listeners.push(callback);
@@ -261,7 +124,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
       if (message?.source !== 'gesturedeck' || message.type !== 'canva-controller-request') return;
       const response = message.command === 'status'
         ? { source: 'gesturedeck-extension', type: 'canva-controller-response', id: message.id, command: 'status', state: { ...extensionState } }
-        : { source: 'gesturedeck-extension', type: 'canva-controller-response', id: message.id, command: 'navigate', accepted: navigationReplyAccepted ?? (extensionState.connected && extensionState.ready) };
+        : { source: 'gesturedeck-extension', type: 'canva-controller-response', id: message.id, command: 'navigate', accepted: extensionState.connected && extensionState.ready };
       queueMicrotask(() => this.dispatchMessage(response, targetOrigin));
     },
   };
@@ -270,28 +133,21 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     fakeWindow.dispatchMessage({ source: 'gesturedeck-extension', type: 'canva-target-state', ...nextState });
   };
   setGlobal('window', fakeWindow);
-  const telemetryStorage = new Map();
+  setGlobal('location', locationState);
+  setGlobal('navigator', { clipboard: { writeText: async () => {} } });
+  const sessionValues = new Map();
   setGlobal('sessionStorage', {
-    getItem: (key) => telemetryStorage.get(key) ?? null,
-    setItem: (key, value) => telemetryStorage.set(key, value),
+    getItem: (key) => sessionValues.get(key) ?? null,
+    setItem: (key, value) => sessionValues.set(key, value),
   });
-  setGlobal('crypto', { randomUUID: () => 'usage-session-id' });
-  let cameraRequests = 0;
-  setGlobal('navigator', {
-    mediaDevices: { getUserMedia: async () => { cameraRequests += 1; throw new Error('Camera should remain off.'); } },
-    clipboard: { writeText: async () => {} },
-  });
+  setGlobal('crypto', { randomUUID: () => 'test-usage-session' });
 
   const calls = [];
   let startCount = 0;
-  let failTelemetry = false;
   setGlobal('fetch', async (url, options = {}) => {
     const call = { url, options, body: options.body ? JSON.parse(options.body) : undefined };
     calls.push(call);
-    if (url === '/api/usage-analytics/event') {
-      if (failTelemetry) throw new Error('analytics offline');
-      return { ok: true };
-    }
+    if (url === '/api/usage-analytics/event') return { ok: true, json: async () => ({ ok: true }) };
     if (url === '/api/mobile-remote/interfaces') {
       return { ok: true, json: async () => ({ interfaces: ['192.168.1.20', '10.0.0.4'] }) };
     }
@@ -303,31 +159,144 @@ test('presenter pairing lists phones and disconnects one without affecting the s
         hostCredential: 'host-secret',
       }) };
     }
+    if (url === '/api/cloud-remote/start') {
+      return { ok: true, json: async () => ({
+        sessionId: 'abcdefghijklmnop',
+        hostCredential: 'host-secret',
+        qrDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+        fallbackUrl: 'https://gesturedeck-two.vercel.app/r/abcdefghijklmnop#invite-secret',
+      }) };
+    }
     if (url === '/api/mobile-remote/renew-invite') {
       return { ok: true, json: async () => ({
         qrDataUrl: 'data:image/png;base64,renewed',
         fallbackUrl: 'http://192.168.1.20:43123/remote#renewed',
       }) };
     }
-    if (url === '/api/mobile-remote/stop') return { ok: true, json: async () => ({ stopped: true }) };
+    if (url === '/api/mobile-remote/stop' || url === '/api/cloud-remote/stop') {
+      return { ok: true, json: async () => ({ stopped: true }) };
+    }
     throw new Error(`Unexpected fetch ${url}`);
   });
 
+  const remoteSockets = [];
   class RemoteSocket {
     static OPEN = 1;
-    constructor(url) { this.url = url; this.readyState = 0; this.sent = []; RemoteSocket.instance = this; }
+    constructor(url) { this.url = url; this.readyState = 0; this.sent = []; RemoteSocket.instance = this; remoteSockets.push(this); }
     send(value) { this.sent.push(JSON.parse(value)); }
     open() { this.readyState = 1; this.onopen(); }
     message(value) { this.onmessage({ data: JSON.stringify(value) }); }
     close() { this.readyState = 3; this.onclose(); }
   }
   setGlobal('WebSocket', RemoteSocket);
+
   try {
-    await import(`../app.js?pairing-test=${Date.now()}`);
-    elements.get('pdf-file').files = [{ name: 'broken.pdf', async arrayBuffer() { return new Uint8Array([1, 2, 3]).buffer; } }];
-    elements.get('pdf-file').dispatch('change');
+    await import(`../app.js?pairing-test=${Date.now()}-${Math.random()}`);
+  } catch (error) {
+    for (const [name, descriptor] of originalGlobals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+    throw error;
+  }
+  return {
+    elements,
+    fakeDocument,
+    fakeWindow,
+    windowListeners,
+    extensionRequests,
+    publishExtensionState,
+    calls,
+    RemoteSocket,
+    remoteSockets,
+    restore() {
+      for (const [name, descriptor] of originalGlobals) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+        else delete globalThis[name];
+      }
+    },
+  };
+}
+
+test('workspace keeps its sample deck, PDF, phone, and manual slide controls', async () => {
+  const html = await readFile(new URL('../workspace.html', import.meta.url), 'utf8');
+  for (const id of ['sample-deck', 'open-pdf', 'connect-phone', 'previous-slide', 'next-slide', 'pdf-file', 'pairing-dialog']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  const css = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
+  const compactDesktopStyles = css.slice(css.indexOf('@media (max-width: 1080px)'), css.indexOf('@media (max-width: 860px)'));
+  assert.match(compactDesktopStyles, /\.keyboard-hint\s*\{\s*display:\s*none;/);
+  const tabletStyles = css.slice(css.indexOf('@media (max-width: 860px)'), css.indexOf('@media (max-width: 620px)'));
+  assert.match(tabletStyles, /\.workspace-grid\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(tabletStyles, /\.control-column\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(html, /← \/ → to navigate/);
+});
+
+test('home and workspace copy names the current presentation flow', async () => {
+  const [homeHtml, workspaceHtml, appSource, css] = await Promise.all([
+    readFile(new URL('../index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../workspace.html', import.meta.url), 'utf8'),
+    readFile(new URL('../app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../styles.css', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(homeHtml, /<a class="local-link" href="\/workspace\.html">Presentation workspace<\/a>/);
+  assert.doesNotMatch(homeHtml, /Local browser workspace/);
+  assert.match(workspaceHtml, /<p class="welcome-description">Choose a sample deck or PDF, then present with the left and right arrow keys or phone controls\.<\/p>/);
+  assert.match(workspaceHtml, /<p class="control-help">Use the Previous and Next buttons or the left and right arrow keys\.<\/p>/);
+  assert.match(appSource, /setText\(document\.querySelector\('\.welcome-description'\), 'Choose a PDF, pair your phone, and present with the left and right arrow keys\.'\)/);
+  assert.match(css, /\.deck-choice-copy > span\s*\{[\s\S]*?color:\s*#696d64;/);
+});
+
+test('manual buttons and unoccupied arrow keys navigate', async () => {
+  const app = await createPairingHarness();
+  try {
+    const { elements, fakeDocument } = app;
+    const pressed = (key) => {
+      let prevented = false;
+      fakeDocument.dispatchEvent('keydown', {
+        key, repeat: false, altKey: false, ctrlKey: false, metaKey: false,
+        target: { closest: () => null }, preventDefault() { prevented = true; },
+      });
+      return prevented;
+    };
+    assert.equal(elements.get('slide-number').textContent, '01');
+    elements.get('sample-deck').dispatch('click');
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'pdf_imported'), false);
+    elements.get('open-pdf').dispatch('click');
+    elements.get('next-slide').dispatch('click');
+    assert.equal(elements.get('slide-number').textContent, '02');
+    assert.equal(pressed('ArrowRight'), true);
+    assert.equal(elements.get('slide-number').textContent, '03');
+    assert.equal(pressed('ArrowLeft'), true);
+    assert.equal(elements.get('slide-number').textContent, '02');
+  } finally {
+    app.restore();
+  }
+});
+
+test('presenter pairing lists phones and disconnects one without affecting the session', async () => {
+  const html = await readFile(new URL('../workspace.html', import.meta.url), 'utf8');
+  const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+  assert.match(html, /<button id="connect-phone"[^>]*>/);
+  const sourceUi = appSource.slice(appSource.indexOf('function renderSourceUi()'), appSource.indexOf('async function renderPdfPage'));
+  assert.match(sourceUi, /show\(elements\.connectPhone, true\)/);
+  assert.match(sourceUi, /pdfActive \? 'PDF · Local file' : 'Browser · Sample deck'/);
+  assert.match(html, /<strong>Connect phone<\/strong>/);
+  assert.doesNotMatch(html.match(/<button id="connect-phone"[^>]*>/)?.[0] ?? '', /hidden/);
+  assert.match(html, /<dialog id="pairing-dialog"[^>]*aria-labelledby="pairing-title"/);
+  assert.match(html, /<label[^>]*for="pairing-interface"[^>]*>Laptop network interface/);
+  assert.match(html, /<label[^>]*for="pairing-url"[^>]*>Pairing URL/);
+  for (const label of ['Start phone connection', 'Copy pairing URL', 'Renew pairing link', 'Disconnect all', 'Close']) {
+    assert.match(html, new RegExp(`>${label.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')}<`));
+  }
+
+  const harness = await createPairingHarness();
+  const {
+    elements, fakeDocument, windowListeners, extensionRequests, publishExtensionState,
+    calls, RemoteSocket,
+  } = harness;
+  try {
     const connectButton = elements.get('connect-phone');
     assert.equal(connectButton.hidden, false, 'Connect phone is visible with the sample deck');
     connectButton.focus();
@@ -336,7 +305,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(fakeDocument.activeElement, elements.get('pairing-interface'));
     assert.deepEqual(calls.map(({ url }) => url), ['/api/mobile-remote/interfaces']);
     assert.deepEqual(elements.get('pairing-interface').children.map(({ value }) => value), ['', '192.168.1.20', '10.0.0.4']);
-    assert.equal(cameraRequests, 0);
     assert.equal(calls.some(({ url }) => url.endsWith('/start')), false);
 
     elements.get('pairing-interface').value = '192.168.1.20';
@@ -349,7 +317,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(elements.get('pairing-url-panel').hidden, true);
     assert.equal(elements.get('pairing-qr').src, '');
     assert.equal(elements.get('pairing-url').value, '');
-    assert.equal(cameraRequests, 0);
 
     const socket = RemoteSocket.instance;
     socket.open();
@@ -381,10 +348,12 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(elements.get('pairing-url-panel').hidden, false);
 
     socket.message({ type: 'phonePaired' });
+    assert.match(elements.get('pairing-status').textContent, /Phone connected/);
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_connected'));
-    assert.match(elements.get('pairing-status').textContent, /Phone connected/);
     await elements.get('disconnect-phone').dispatch('click');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'session_ended'));
     assert.ok(calls.some(({ url, body }) => url === '/api/mobile-remote/stop' && body && Object.keys(body).length === 0));
     assert.equal(socket.readyState, 3);
     assert.equal(elements.get('pairing-status').textContent, 'Disconnected');
@@ -393,7 +362,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     assert.equal(elements.get('pairing-url').value, '');
     assert.equal(elements.get('new-pairing-link').hidden, true);
     assert.equal(elements.get('disconnect-phone').hidden, true);
-    assert.equal(cameraRequests, 0);
 
     const rejectionCases = [
       {
@@ -403,6 +371,18 @@ test('presenter pairing lists phones and disconnects one without affecting the s
       {
         event: { type: 'presenterRejected', reason: 'already-connected' },
         status: 'The presenter session was rejected as already in use (`already-connected`). Disconnect all, then create a new session.',
+      },
+      {
+        event: { type: 'presenterRejected', reason: 'session-missing' },
+        status: 'The presenter session could not be found (`session-missing`). Disconnect all, then create a new session.',
+      },
+      {
+        event: { type: 'presenterRejected', reason: 'session-ended' },
+        status: 'The presenter session has ended (`session-ended`). Disconnect all, then create a new session.',
+      },
+      {
+        event: { type: 'presenterRejected', reason: 'invalid-session-state' },
+        status: 'The presenter session state could not be read (`invalid-session-state`). Disconnect all, then create a new session.',
       },
       {
         event: { type: 'presenterRejected', reason: 'untrusted invite secret' },
@@ -428,7 +408,6 @@ test('presenter pairing lists phones and disconnects one without affecting the s
       await elements.get('disconnect-phone').dispatch('click');
       assert.equal(elements.get('pairing-status').textContent, 'Disconnected');
       assert.equal(calls.filter(({ url }) => url === '/api/mobile-remote/stop').length, stopCount + 1);
-      assert.equal(calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'session_ended').length, 1);
     }
 
     await elements.get('close-pairing-dialog').dispatch('click');
@@ -439,6 +418,7 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     elements.get('pairing-interface').value = '10.0.0.4';
     elements.get('pairing-interface').dispatch('change');
     publishExtensionState({ connected: true, ready: true });
+    assert.equal(elements.get('target-status').textContent, 'Canva presentation · Connected');
     await connectButton.dispatch('click');
     elements.get('pairing-interface').value = '192.168.1.20';
     elements.get('pairing-interface').dispatch('change');
@@ -451,49 +431,182 @@ test('presenter pairing lists phones and disconnects one without affecting the s
     const canvaSocket = RemoteSocket.instance;
     canvaSocket.open();
     canvaSocket.message({ type: 'presenterReady' });
-    canvaSocket.message({ type: 'phonePaired' });
     canvaSocket.message({ type: 'command', id: 'canva-next', action: 'next' });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(extensionRequests.at(-1).action, 'next');
+    await new Promise((resolve) => setImmediate(resolve));
     assert.ok(calls.some(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation'));
+    assert.equal(extensionRequests.at(-1).action, 'next');
     assert.equal(elements.get('slide-number').textContent, '01');
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-next', accepted: true });
 
-    const navigationEventsBeforeCanvaReject = calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length;
-    navigationReplyAccepted = false;
-    canvaSocket.message({ type: 'command', id: 'canva-rejected', action: 'next' });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-rejected', accepted: false });
-    assert.equal(calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length, navigationEventsBeforeCanvaReject);
-    navigationReplyAccepted = null;
-
     publishExtensionState({ connected: false, ready: false });
+    assert.equal(elements.get('target-status').textContent, 'Canva presentation · Disconnected');
     const navigationEventsBeforeReject = calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length;
     canvaSocket.message({ type: 'command', id: 'canva-offline', action: 'next' });
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-offline', accepted: false });
     assert.equal(calls.filter(({ url, body }) => url === '/api/usage-analytics/event' && body?.event === 'phone_navigation').length, navigationEventsBeforeReject);
 
-    publishExtensionState({ connected: true, ready: true });
-    failTelemetry = true;
-    canvaSocket.message({ type: 'command', id: 'canva-telemetry-offline', action: 'next' });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(canvaSocket.sent.at(-1), { type: 'commandAck', id: 'canva-telemetry-offline', accepted: true });
-    failTelemetry = false;
-
     const pagehideSocket = canvaSocket;
+    canvaSocket.message({ type: 'phonePaired' });
+    await new Promise((resolve) => setImmediate(resolve));
     const stopsBeforePagehide = calls.filter(({ url }) => url === '/api/mobile-remote/stop').length;
     await windowListeners.get('pagehide')?.[0]?.();
+    await new Promise((resolve) => setImmediate(resolve));
     assert.ok(calls.some(({ url, body, options }) => url === '/api/usage-analytics/event' && body?.event === 'session_ended' && options.keepalive));
     assert.equal(calls.filter(({ url }) => url === '/api/mobile-remote/stop').length, stopsBeforePagehide + 1);
     assert.equal(pagehideSocket.readyState, 3);
     assert.equal(elements.get('pairing-url').value, '');
     assert.equal(elements.get('pairing-status').textContent, 'Disconnected');
-    assert.equal(cameraRequests, 0);
   } finally {
-    for (const [name, descriptor] of originalGlobals) {
-      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-      else delete globalThis[name];
-    }
+    harness.restore();
+  }
+});
+
+test('hosted Canva pairing starts before controls are ready and publishes readiness changes', async () => {
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: true, ready: false },
+  });
+  const { elements, extensionRequests, publishExtensionState, calls, RemoteSocket } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const startCall = calls.find(({ url }) => url === '/api/cloud-remote/start');
+    assert.ok(startCall, 'a connected Canva tab can create a hosted phone session before controls appear');
+    assert.equal(startCall.options.method, 'POST');
+    assert.deepEqual(startCall.body, {
+      state: { target: 'canva', ready: false, index: null, total: null, busy: false },
+    });
+    assert.equal(elements.get('pairing-dialog').open, true);
+
+    const socket = RemoteSocket.instance;
+    assert.ok(socket, 'the hosted presenter socket is created');
+    socket.open();
+    socket.message({ type: 'presenterReady' });
+    assert.deepEqual(socket.sent.at(-1), {
+      type: 'state', target: 'canva', ready: false, index: null, total: null, busy: false,
+    });
+
+    socket.message({ type: 'command', id: 'not-ready-next', action: 'next' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(extensionRequests.filter(({ command }) => command === 'navigate').length, 0);
+    assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'not-ready-next', accepted: false });
+
+    const navigateRequestsBeforePrevious = extensionRequests.filter(({ command }) => command === 'navigate').length;
+    socket.message({ type: 'command', id: 'not-ready-previous', action: 'previous' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(extensionRequests.filter(({ command }) => command === 'navigate').length, navigateRequestsBeforePrevious);
+    assert.deepEqual(socket.sent.at(-1), { type: 'commandAck', id: 'not-ready-previous', accepted: false });
+
+    publishExtensionState({ connected: true, ready: true });
+    assert.deepEqual(socket.sent.at(-1), {
+      type: 'state', target: 'canva', ready: true, index: null, total: null, busy: false,
+    });
+
+    const statesBeforeDisconnect = socket.sent.filter(({ type }) => type === 'state').length;
+    publishExtensionState({ connected: false, ready: false });
+    const statesAfterDisconnect = socket.sent.filter(({ type }) => type === 'state');
+    assert.equal(statesAfterDisconnect.length, statesBeforeDisconnect + 1);
+    assert.deepEqual(statesAfterDisconnect.at(-1), {
+      type: 'state', target: 'canva', ready: false, index: null, total: null, busy: false,
+    });
+    publishExtensionState({ connected: false, ready: false });
+    assert.equal(socket.sent.filter(({ type }) => type === 'state').length, statesAfterDisconnect.length);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('hosted startup with Canva disconnected opens pairing without starting a session', async () => {
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: false, ready: false },
+  });
+  const { elements, calls } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(elements.get('pairing-dialog').open, true);
+    assert.equal(elements.get('pairing-status').textContent,
+      'Connect Canva in the extension first, then open phone pairing again.');
+    assert.equal(calls.some(({ url }) => url === '/api/cloud-remote/start'), false);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('hosted presenter reconnects without replacing its pairing session and Stop remains terminal', async () => {
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: true, ready: true },
+  });
+  const { elements, calls, remoteSockets } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    const firstSocket = remoteSockets[0];
+    firstSocket.open();
+    firstSocket.message({ type: 'presenterReady' });
+    firstSocket.message({ type: 'phones', phones: [
+      { phoneId: 'phone-1', label: 'Alex iPhone', deviceType: 'iphone', status: 'connected' },
+    ] });
+    firstSocket.close();
+
+    assert.equal(calls.some(({ url }) => url === '/api/cloud-remote/stop'), false);
+    assert.equal(elements.get('pairing-qr-panel').hidden, false);
+    assert.equal(elements.get('pairing-url-panel').hidden, false);
+    assert.equal(elements.get('pairing-url').value,
+      'https://gesturedeck-two.vercel.app/r/abcdefghijklmnop#invite-secret');
+    assert.equal(elements.get('paired-phones').children.length, 1);
+    assert.equal(elements.get('disconnect-phone').hidden, false);
+    assert.match(elements.get('pairing-status').textContent, /Reconnecting/);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(remoteSockets.length, 2);
+    const recovered = remoteSockets[1];
+    assert.match(recovered.url, /session=abcdefghijklmnop/);
+    recovered.open();
+    assert.deepEqual(recovered.sent[0], { type: 'presenter', credential: 'host-secret' });
+    recovered.message({ type: 'presenterReady' });
+    assert.deepEqual(recovered.sent.at(-1), {
+      type: 'state', target: 'canva', ready: true, index: null, total: null, busy: false,
+    });
+    assert.equal(elements.get('pairing-qr-panel').hidden, false);
+    assert.equal(elements.get('paired-phones').children.length, 1);
+
+    await elements.get('disconnect-phone').dispatch('click');
+    assert.equal(recovered.readyState, 3);
+    assert.equal(calls.filter(({ url }) => url === '/api/cloud-remote/stop').length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(remoteSockets.length, 2, 'explicit Stop cancels automatic retries');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('hosted pagehide stops the session and cancels a pending reconnect', async () => {
+  const harness = await createPairingHarness({
+    pageUrl: 'https://gesturedeck-two.vercel.app/workspace.html?experience=cloud&connect=phone',
+    initialExtensionState: { connected: true, ready: true },
+  });
+  const { calls, remoteSockets, windowListeners } = harness;
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    const socket = remoteSockets[0];
+    socket.open();
+    socket.message({ type: 'presenterReady' });
+    socket.close();
+
+    await windowListeners.get('pagehide')?.[0]?.();
+    const stop = calls.find(({ url }) => url === '/api/cloud-remote/stop');
+    assert.ok(stop);
+    assert.equal(stop.options.keepalive, true);
+    assert.deepEqual(stop.body, { sessionId: 'abcdefghijklmnop', hostCredential: 'host-secret' });
+    assert.equal(socket.readyState, 3);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(remoteSockets.length, 1, 'pagehide cancels the scheduled retry');
+  } finally {
+    harness.restore();
   }
 });

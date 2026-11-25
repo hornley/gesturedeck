@@ -385,14 +385,14 @@ export function createMobileRemoteSession({
     };
     phone.commandRecords.set(message.id, record);
 
-    if (state.busy || (state.target === 'canva' && !state.ready)) {
+    if (presenterCommands.size > 0 || state.busy || (state.target === 'canva' && !state.ready)) {
       record.ack = { type: 'commandAck', id: message.id, accepted: false };
       sendSocket(socket, record.ack);
       record.waiters.clear();
       return;
     }
 
-    presenterCommands.set(presenterId, { phone, phoneCommandId: message.id, record });
+    presenterCommands.set(presenterId, { phoneCommandId: message.id, record });
     sendSocket(presenterSocket, command);
   }
 
@@ -483,9 +483,6 @@ export function createMobileRemoteSession({
     phonesById.delete(phone.phoneId);
     phoneIdsByCredential.delete(phone.credential);
     if (phone.socket) phoneIdsBySocket.delete(phone.socket);
-    for (const [presenterId, pending] of presenterCommands) {
-      if (pending.phone === phone) presenterCommands.delete(presenterId);
-    }
     phone.commandRecords.clear();
     const socket = phone.socket;
     phone.socket = undefined;

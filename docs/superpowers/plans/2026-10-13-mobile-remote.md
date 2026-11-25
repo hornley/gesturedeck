@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a same-network phone browser remote that controls GestureDeck’s active sample or PDF presentation while keeping the deck, rendering, and camera on the presenter device.
+**Goal:** Add a same-network phone browser remote that controls GestureDeck’s active sample or PDF presentation while the presentation stays in the presenter browser.
 
 **Architecture:** The Node server starts a temporary, narrowly scoped listener on a selected private network interface only after the presenter chooses **Connect phone**. A temporary session coordinator pairs one phone and relays an allowlisted set of commands to the presenter browser over a loopback WebSocket. The presenter browser applies every action through the existing `PresentationController` and sends only the slide index, total, and rendering-busy state back to the phone.
 
@@ -16,17 +16,17 @@
 - `src/qr-code.js`: Encode the short local pairing URL as a QR SVG/data URL using an in-repository byte-mode QR encoder; no hosted QR service or runtime package is used.
 - `tests/websocket.test.js`, `tests/qr-code.test.js`: Cover the local WebSocket protocol boundary and deterministic QR generation/capacity.
 - `src/mobile-remote-session.js`: Own invite expiry, one-phone pairing, reconnect credentials, command allowlisting, command deduplication, sanitized state, and session shutdown. Keep it independent of HTTP and DOM code.
-- `src/mobile-remote-server.js`: Add the loopback start/stop/interface API, presenter WebSocket, temporary private-interface HTTP/WebSocket listener, strict remote asset allowlist, origin checks, and locally generated QR URL.
+- `src/mobile-remote-server.js`: Add the local start/stop/interface API, presenter WebSocket, temporary private-interface HTTP/WebSocket listener, strict remote asset allowlist, origin checks, and locally generated QR URL.
 - `src/mobile-remote-client.js`: Connect the presenter page to its loopback WebSocket, deliver validated phone commands to the app, publish state, and clean up the connection.
-- `mobile-remote.html`, `mobile-remote.css`, `src/mobile-remote-phone.js`: Provide the isolated phone page with pairing, reconnect, touch navigation, slide position, numbered slide selection, and connection states. Do not import `app.js`, camera code, hand-tracking code, or PDF.js.
-- `server.mjs`: Attach the remote server to the existing loopback HTTP server. Keep the main server loopback-only and preserve its existing public-file and symlink protections.
+- `mobile-remote.html`, `mobile-remote.css`, `src/mobile-remote-phone.js`: Provide the isolated phone page with pairing, reconnect, touch navigation, slide position, numbered slide selection, and connection states. Do not import `app.js` or PDF.js.
+- `server.mjs`: Attach the remote API to the development server and preserve its existing public-file and symlink protections.
 - `index.html`, `styles.css`, `app.js`: Add **Connect phone**, interface selection, QR/fallback URL, connection status, stop behavior, and a bridge from remote commands to the existing presentation controller.
 - `tests/mobile-remote-session.test.js`: Cover the in-memory pairing and command rules.
 - `tests/mobile-remote-server.test.js`, `tests/server.test.js`: Cover API security, interface filtering, temporary listener routes, and the existing server’s unchanged loopback boundary.
 - `tests/mobile-remote-client.test.js`: Cover presenter WebSocket messages, state publishing, command forwarding, reconnect, and cleanup with an injected fake WebSocket.
 - `tests/mobile-remote-phone.test.js`: Cover phone pairing, reconnect state, command payloads, disabled states, and number validation with fake DOM elements and WebSockets.
-- `tests/app.test.js`: Cover the host UI flow and ensure remote setup never requests camera access.
-- `README.md`: Document same-network setup, the trusted-network requirement, unencrypted local control traffic, offline use, and the fact that PDF and camera data remain on the presenter.
+- `tests/app.test.js`: Cover the host UI flow and confirm pairing stays separate from presentation state.
+- `README.md`: Document local-network setup, the trusted-network requirement, unencrypted local control traffic, offline use, and the fact that presentation content stays in the presenter browser.
 
 ## Message contract
 
@@ -241,7 +241,7 @@ git commit -m "feat: add mobile remote session coordinator"
 
 - [ ] **Step 1: Write failing interface and route tests**
 
-Inject the interface provider, listener factory, and QR generator. Verify that only non-internal RFC1918 IPv4 addresses are returned, and that loopback, link-local, public, and internal interfaces are rejected. Start a test listener on `127.0.0.1` through the injected factory and verify that `/remote`, `/mobile-remote.css`, and `/src/mobile-remote-phone.js` are the only served routes; `/`, `/app.js`, `/assets/hand_landmarker.task`, `/node_modules/pdfjs-dist/build/pdf.mjs`, and `/spec.md` return 404.
+Inject the interface provider, listener factory, and QR generator. Verify that only non-internal RFC1918 IPv4 addresses are returned, and that loopback, link-local, public, and internal interfaces are rejected. Start a test listener on `127.0.0.1` through the injected factory and verify that `/remote`, `/mobile-remote.css`, and `/src/mobile-remote-phone.js` are the only served routes; `/`, `/app.js`, `/assets/unlisted.bin`, `/node_modules/pdfjs-dist/build/pdf.mjs`, and `/README.md` return 404.
 
 - [ ] **Step 2: Write failing loopback API security tests**
 
@@ -254,18 +254,18 @@ Expected: FAIL because the mobile API and temporary listener do not exist.
 
 - [ ] **Step 4: Implement the remote server module**
 
-Export `attachMobileRemote(server, options)` from `src/mobile-remote-server.js`. It owns the session coordinator, enumerates network interfaces, allows the UI to select only a returned RFC1918 address, creates a second HTTP server on that address with an OS-assigned port, and closes it on stop. Use `createQrDataUrl(pairUrl)` locally. Keep the default development server bound to `127.0.0.1`; do not relax `resolveListenHost()` or bind the full app to `0.0.0.0`.
+Export `attachMobileRemote(server, options)` from `src/mobile-remote-server.js`. It owns the session coordinator, enumerates network interfaces, allows the UI to select only a returned RFC1918 address, creates a second HTTP server on that address with an OS-assigned port, and closes it on stop. Use `createQrDataUrl(pairUrl)` locally. Keep the main server's configured host behavior and preserve `resolveListenHost()` checks.
 
 The loopback API must accept only same-origin requests to the exact mobile-remote routes. `/api/mobile-remote/start` returns the QR data URL, fallback URL, and a separate host credential for the presenter WebSocket. The presenter’s first message must authenticate with that credential; after authentication, the server sends `{ type: 'presenterReady' }`. The presenter client sends its initial sanitized state only after this message, and the host UI reveals the QR and fallback URL only after receiving it. If authentication fails, send `presenterRejected` with reason `invalid-credential` and close the socket. `/api/mobile-remote/renew-invite` rotates the unused or expired invite and returns a new QR data URL and fallback URL without reopening the listener. When a phone submits an expired, invalid, or already-consumed invite, send `pairRejected` with reason `expired`, `invalid`, or `already-paired`; if the presenter channel is not authenticated, send `host-unavailable`. On phone reconnect, send `resumed` with the latest state or `resumeRejected` with reason `invalid`. Notify the presenter with `inviteExpired` when the active invite timer elapses. The temporary listener must serve its three remote assets and `/ws/mobile-remote/phone` only. Attach a `WebSocketServer` to `/ws/mobile-remote/presenter` on loopback and the phone WebSocket to the temporary LAN listener. Require a loopback peer for the presenter WebSocket and an RFC1918 IPv4 peer for the phone WebSocket; validate `Origin`, remote Host, path, invite/credential, payload size, and JSON before dispatch. Set each page’s CSP `connect-src` to that page’s exact same-origin WebSocket URL; do not allow arbitrary `ws:` hosts.
 
 - [ ] **Step 5: Integrate cleanup and preserve existing server behavior**
 
-In `createAppServer`, attach the remote handler using the same resolved project root. If the presenter WebSocket closes, stop the remote session and temporary listener; do not depend only on a best-effort `pagehide` request. On `SIGINT`/`SIGTERM`, close the remote session and temporary listener before closing the main server. Ensure static serving continues to use the existing realpath check, `isPublicPath`, security headers, and 404 behavior. The main listener remains loopback-only at all times.
+In `createAppServer`, attach the remote handler using the same resolved project root. If the presenter WebSocket closes, stop the remote session and temporary listener; do not depend only on a best-effort `pagehide` request. On `SIGINT`/`SIGTERM`, close the remote session and temporary listener before closing the main server. Ensure static serving continues to use the existing realpath check, `isPublicPath`, security headers, and 404 behavior.
 
 - [ ] **Step 6: Run server tests**
 
 Run: `node --test tests/mobile-remote-server.test.js tests/server.test.js`  
-Expected: PASS, including the existing static-file, symlink, and loopback-only cases.
+Expected: PASS, including the existing static-file, symlink, host, origin, and peer checks.
 
 - [ ] **Step 7: Commit the server boundary**
 
@@ -295,12 +295,11 @@ Export `createMobileRemoteClient({ WebSocketImpl, onCommand, onConnection, hostC
 
 In `app.js`, add a bounded `goToSlide(index, source)` path beside `nextSlide()` and `previousSlide()`. Map remote `previous` and `next` to the existing navigation functions and map `goTo` to `presentation.goTo(index)` followed by `renderSlide()`. Return `false` for malformed commands, invalid `goTo`, or PDF-busy state; return `true` after applying a valid command, including a bounded no-op at the first or last slide. All remote commands must use the same renderer and PDF busy guard as desktop actions.
 
-Publish `{ index, total, busy }` after successful navigation, after a PDF render completes or fails, and when a new sample/PDF source is committed. Never include the slide object, PDF filename, PDF content, camera state, or gesture diagnostics in a remote state message. Connecting the remote must not call `startCapture`, `getUserMedia`, or camera-session methods.
+Publish `{ index, total, busy }` after successful navigation, after a PDF render completes or fails, and when a new sample/PDF source is committed. Never include the slide object, PDF filename, or PDF content in a remote state message.
 
 - [ ] **Step 5: Run app and transport tests**
 
 Run: `node --test tests/mobile-remote-client.test.js tests/app.test.js`  
-Expected: PASS, including a test that simulates a remote command with camera inactive and confirms the current slide changes without a camera request.
 
 - [ ] **Step 6: Commit the presenter bridge**
 
@@ -324,7 +323,7 @@ Expected: FAIL because the phone client and page do not exist.
 
 - [ ] **Step 3: Create the phone-only HTML shell and responsive styles**
 
-Build a page with a status region, a slide position such as `4 / 18`, labelled Previous/Next buttons, a numeric slide field with a Go button, and Disconnect. Use a 48 by 48 CSS pixel minimum for every control. Include viewport metadata and focus-visible styles. Do not include scripts or resources from `app.js`, camera/tracking modules, MediaPipe, or PDF.js.
+Build a page with a status region, a slide position such as `4 / 18`, labelled Previous/Next buttons, a numeric slide field with a Go button, and Disconnect. Use a 48 by 48 CSS pixel minimum for every control. Include viewport metadata and focus-visible styles.
 
 - [ ] **Step 4: Implement pairing, state, and reconnect**
 
@@ -354,7 +353,7 @@ git commit -m "feat: add touch-first mobile remote page"
 
 - [ ] **Step 1: Write failing host-flow tests**
 
-Extend the existing fake-DOM app tests to assert: **Connect phone** is visible with the sample and imported PDF; opening the pairing dialog fetches available interfaces but does not start camera setup; selecting an interface starts the remote and holds the returned QR and fallback URL hidden until the presenter client reports authenticated; expired invite status exposes **New pairing link**, which calls the renew route and replaces both QR and URL; connection status changes when the presenter WebSocket reports a paired phone; **Disconnect phone** calls the stop route, closes the host WebSocket, and restores the idle pairing state.
+Extend the fake-DOM app tests to cover **Connect phone** visibility with the sample and imported PDF; interface loading; starting the remote only after an interface is selected; hiding the QR and fallback URL until the presenter client authenticates; invite renewal; paired-phone status; disconnect cleanup; and clearing pairing state when the page hides.
 
 - [ ] **Step 2: Run the focused app test to verify it fails**
 
@@ -367,12 +366,11 @@ In `index.html`, add **Connect phone** near the deck controls and a pairing `<di
 
 - [ ] **Step 4: Wire the dialog to the loopback API**
 
-In `app.js`, request `/api/mobile-remote/interfaces`, post the selected address and current `{ index, total, busy }` to `/api/mobile-remote/start`, then connect `MobileRemoteClient` with the returned host credential. Keep the QR/data URL and fallback link hidden until the client receives `{ type: 'presenterReady' }`. When the invite expires before pairing, offer **New pairing link** and post `/api/mobile-remote/renew-invite`; replace the old QR and URL. On stop or `pagehide`, post `/api/mobile-remote/stop`, close the client, clear QR/URL data, and return the host panel to disconnected state. Opening or closing the dialog must not pause gestures or access the camera.
+In `app.js`, request `/api/mobile-remote/interfaces`, post the selected address and current `{ index, total, busy }` to `/api/mobile-remote/start`, then connect `MobileRemoteClient` with the returned host credential. Keep the QR and fallback link hidden until the client receives `{ type: 'presenterReady' }`. On stop or `pagehide`, post `/api/mobile-remote/stop`, close the client, clear the QR and URL, and return the host panel to disconnected state.
 
 - [ ] **Step 5: Add responsive host styles and run tests**
 
 Style the pairing dialog in `styles.css` to fit narrow viewports and preserve visible focus. Run: `node --test tests/app.test.js tests/mobile-remote-client.test.js`  
-Expected: PASS, including camera-off behavior and dialog cleanup.
 
 - [ ] **Step 6: Commit host pairing UI**
 
@@ -387,7 +385,7 @@ git commit -m "feat: add presenter phone pairing controls"
 
 - [ ] **Step 1: Add the mobile remote usage and privacy documentation**
 
-In `README.md`, explain how to connect both devices to the same Wi-Fi, choose **Connect phone**, scan or open the fallback URL, navigate, and disconnect. State that the normal server remains loopback-only and the separate listener exists only for an active remote session. State that local HTTP/WebSocket control traffic is unencrypted and the feature is for trusted networks only. Confirm no internet, account, camera permission, PDF upload, slide transfer, or runtime QR service is used.
+Explain how to connect both devices to the same trusted network, including an iPhone Personal Hotspot when the phone can reach the laptop, choose **Connect phone**, scan or open the fallback URL, navigate, and disconnect. Explain that the temporary listener exists only during a remote session, serves only phone controls, and sends no slide content. State that local HTTP/WebSocket control traffic is unencrypted and intended for trusted networks.
 
 - [ ] **Step 2: Add all new JavaScript files to the syntax check**
 
@@ -415,11 +413,11 @@ Expected: all Node tests pass and every listed JavaScript file parses successful
 
 - [ ] **Step 4: Perform two-device acceptance checks**
 
-On a physical iPhone running Safari and an Android phone running Chrome, join the presenter computer’s Wi-Fi and verify QR pairing, fallback URL pairing, Previous/Next, numbered slide jumps, and live position updates from a desktop button and a gesture. Repeat while controlling an imported PDF and with the camera never started. Test invite expiration/reuse, a second phone, phone refresh, phone sleep, Wi-Fi loss/recovery, explicit disconnect, presenter page close, no available LAN interface, and a network with client isolation.
+On an iPhone in Safari and an Android phone in Chrome, verify QR and fallback URL pairing, Previous/Next, numbered slide selection, and live position updates from desktop buttons and keyboard controls. Repeat with a PDF. Test invite expiry, a second phone, refresh, sleep, network loss/recovery, explicit disconnect, presenter page close, no available interface, and client isolation. Confirm iPhone Hotspot reachability with a physical device before documenting it as verified.
 
 - [ ] **Step 5: Inspect exposure and data flow**
 
-Confirm the normal server still listens only on `127.0.0.1`; while connected, confirm the temporary listener binds only to the selected private address and serves only remote assets. Inspect WebSocket messages to confirm that they contain only pairing/control values and `{ index, total, busy }`; verify that camera frames, landmarks, PDF bytes, rendered pages, filenames, and slide text are absent.
+Confirm the temporary listener binds only to the selected private address and serves only the phone assets. Inspect WebSocket messages to confirm they contain only pairing/control values and `{ index, total, busy }`, with no PDF bytes, rendered pages, filenames, or slide text.
 
 - [ ] **Step 6: Commit docs and final validation changes**
 
@@ -434,4 +432,4 @@ git commit -m "docs: document local mobile remote"
 - **Placeholder scan:** No TODO, TBD, or unspecified implementation steps remain. Every task names exact files, tests, and commands.
 - **Type and message consistency:** The loopback presenter channel uses `presenter` → `presenterReady` before sending initial state. The phone uses `pair` → `paired` or `resume` → `resumed`; both return only `{ index, total, busy }` plus the initial pairing credential. Navigation commands, acknowledgements, rejection messages, and disconnect use the same names and fields throughout the session module, server, and browser clients. `goTo` indexes are zero-based over the existing `PresentationController` API; the phone number input converts from one-based display before sending.
 - **Existing controller fit:** `PresentationController` already exposes bounded `next`, `previous`, and `goTo`; do not modify `src/presentation.js` unless a test reveals a specific missing behavior.
-- **Security boundary:** The normal app server remains loopback-only. The temporary listener is separate, private-interface-bound, route-limited, authenticated, and closed on stop. The plan documents that local transport is not encrypted and must be used only on trusted networks.
+- **Security boundary:** The temporary listener is separate, private-interface-bound, route-limited, authenticated, and closed on stop. The plan documents that local transport is not encrypted and must be used only on trusted networks.

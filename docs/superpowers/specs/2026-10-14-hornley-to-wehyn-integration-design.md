@@ -28,12 +28,6 @@ Resolve the eight reported conflicts while keeping the Canva path and the source
 
 The browser extension continues to bind one Canva presentation tab and expose status/navigation to the local GestureDeck presenter allowed by its current manifest. Local phone remotes use the source's one-to-eight phone session. For a Canva target, the presenter routes only previous/next actions through the extension; it does not send a slide index or count. The sample deck and PDFs retain the source's local behavior. The hosted remote keeps the source's existing one-to-eight phone behavior for its supported targets; this integration does not expand the extension's localhost-only match rules to hosted origins.
 
-Keep local camera and PDF processing behavior intact. Hosted remote code relays pairing and navigation state without sending PDF bytes or camera data. The extension remains opt-in and only connects after the user selects a Canva presentation in Present or View mode.
-
-## Failure behavior
-
-Preserve the extension's disconnected and not-ready states when no usable Canva presentation is selected. Preserve the hosted remote's pairing expiration, reconnect, individual phone removal, and eight-phone capacity. A failure in one path should not prevent the local sample deck, PDF, or camera gesture paths from working.
-
 ## Validation and delivery
 
 Keep the target's Canva extension regression tests, the source's single- and multi-phone regression tests, and the source CI workflow in the merged tree. Review the merged diff for extension retention, phone capacity and reconnect behavior, feature coverage, and accidental file removals. Prepare the result on a target-based PR branch; do not push changes directly to `main`. Existing automated checks can validate the PR branch.

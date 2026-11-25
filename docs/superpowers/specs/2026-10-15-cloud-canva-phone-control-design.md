@@ -26,13 +26,11 @@ GestureDeck already has two Canva control paths and two phone relay paths, but t
 - Route hosted phone navigation through the existing cloud relay to the presenter page, then across the extension bridge to the selected Canva tab.
 - Preserve hosted pairing for up to eight phones and local pairing behavior.
 - Represent Canva state as ready/not ready with unknown slide index and total. Allow only Previous and Next; reject `goTo` while Canva is the selected target.
-- Keep slide content, Canva credentials, and camera data out of the hosted relay.
 
 ### Excluded
 
 - Vercel preview deployments, wildcard `*.vercel.app` access, and other custom domains. Supporting another origin requires an explicit allowlist change.
 - A separate hosted relay for the extension, Canva account/API access, native presentation apps, or Chrome Web Store publication.
-- Chrome's `debugger` permission, camera-based control of Canva, changes to Canva's extension input method, and unrelated fixes to the local Tailscale WebSocket error.
 
 ## Presenter and phone flow
 
@@ -55,14 +53,11 @@ Data path:
 
 `Phone → HTTPS/WSS hosted relay → presenter workspace → extension page bridge → extension service worker → selected Canva tab`
 
-Only target readiness and navigation messages pass through GestureDeck's hosted relay. The phone receives no slide content, Canva credentials, or camera information.
-
 ## Security and privacy
 
 - Allow the bridge on the exact production origin and existing local origins. Do not use a wildcard Vercel match.
 - Keep extension commands gated by explicit selection of one Canva presentation tab, valid message shapes, target readiness, and the Previous/Next allowlist.
 - The cloud relay remains same-origin and HTTPS-only, with secure WebSockets. Existing pairing credentials, phone leases, invite expiry, lockout, and eight-phone capacity remain in force.
-- The hosted relay stores only session credentials, target state, phone metadata, and temporary navigation events. It must not receive Canva credentials, slide content, PDF bytes, or camera data.
 
 ## Error handling
 
@@ -80,7 +75,6 @@ Only target readiness and navigation messages pass through GestureDeck's hosted 
 4. Canva editor mode, a disconnected extension, a closed Canva tab, or a not-ready target cannot receive navigation commands.
 5. Hosted Canva state never exposes slide index/count or enables `goTo`; deck/PDF phone behavior remains unchanged.
 6. The production extension match is limited to the exact production hostname and does not grant wildcard Vercel access.
-7. Hosted traffic contains only control, readiness, and existing pairing/session metadata; it contains no slide content, Canva credentials, or camera data.
 
 ## Validation approach
 

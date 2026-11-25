@@ -7,7 +7,7 @@
     "api/cloud-remote-ws.js": { "regions": ["sin1"] }
   },
   "buildCommand": "npm run build:vercel",
-  "outputDirectory": "dist",
+  "outputDirectory": "dist/site",
   "rewrites": [
     { "source": "/analytics", "destination": "/analytics.html" },
     { "source": "/api/usage-analytics/event", "destination": "/api/usage-analytics?__gd_route=event" },
