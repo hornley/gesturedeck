@@ -89,9 +89,13 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
   server.on('request', async (request, response) => {
     let parsed;
     try { parsed = new URL(request.url, 'http://gesturedeck.invalid'); } catch { sendJson(response, 400, { error: 'bad_request' }); return; }
-    if (parsed.pathname !== API_PATH) return;
+    const pathRoute = parsed.pathname.startsWith(`${API_PATH}/`) ? parsed.pathname.slice(API_PATH.length + 1) : null;
+    const hasPathRoute = pathRoute !== null;
+    if (parsed.pathname !== API_PATH && !hasPathRoute) return;
     const routes = parsed.searchParams.getAll('__gd_route');
-    const route = routes.length === 1 ? routes[0] : null;
+    if (hasPathRoute && !['event', 'login', 'logout', 'summary'].includes(pathRoute)) { sendJson(response, 404, { error: 'not_found' }); return; }
+    if (hasPathRoute && routes.length > 0 && (routes.length !== 1 || routes[0] !== pathRoute)) { sendJson(response, 400, { error: 'bad_request' }); return; }
+    const route = hasPathRoute ? pathRoute : routes.length === 1 ? routes[0] : null;
     if (!['event', 'login', 'logout', 'summary'].includes(route)) { sendJson(response, 404, { error: 'not_found' }); return; }
     if (route === 'summary' && request.method === 'GET' && !cookieToken(request)) { sendJson(response, 401, { error: 'unauthorized' }); return; }
     const redisController = new AbortController();
@@ -115,7 +119,8 @@ export function attachUsageAnalytics(server, { redis, env = process.env, now = D
     if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden' }); return; }
     let body;
     try { body = await readApiJson(request); } catch { sendJson(response, 400, { error: 'bad_request' }); return; }
-    if (parsed.searchParams.getAll('__gd_route').length !== 1 || [...parsed.searchParams.keys()].some((key) => key !== '__gd_route')) { sendJson(response, 400, { error: 'bad_request' }); return; }
+    if ((!hasPathRoute && routes.length !== 1) || (hasPathRoute && routes.length > 1)
+      || [...parsed.searchParams.keys()].some((key) => key !== '__gd_route')) { sendJson(response, 400, { error: 'bad_request' }); return; }
     if (route === 'event') {
       if (!['event', 'sessionId'].every((key) => Object.hasOwn(body, key)) || Object.keys(body).some((key) => !['event', 'sessionId'].includes(key))) { sendJson(response, 400, { error: 'bad_request' }); return; }
       if (!EVENTS.has(body.event) || typeof body.sessionId !== 'string' || !UUID_PATTERN.test(body.sessionId)) { sendJson(response, 400, { error: 'bad_request' }); return; }
