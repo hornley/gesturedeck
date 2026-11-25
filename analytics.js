@@ -97,12 +97,19 @@ loginForm.addEventListener('submit', async (event) => {
       method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ password: passwordInput.value }),
     });
-    if (!response.ok) throw new Error('Sign in failed');
+    if (response.status === 401) {
+      setStatus('Sign in failed. Check the password and try again.');
+      return;
+    }
+    if (!response.ok) {
+      setStatus('Analytics service is unavailable right now. Try again later.');
+      return;
+    }
     passwordInput.value = '';
     showDashboard();
     await loadSummary();
   } catch {
-    setStatus('Sign in failed. Check the password and try again.');
+    setStatus('Could not reach the analytics service. Check your connection and try again.');
   }
 });
 

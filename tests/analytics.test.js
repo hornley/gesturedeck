@@ -61,6 +61,7 @@ async function bootAnalytics(fetchStub) {
 test('dashboard headers align with daily metrics and sends the API logout contract', async () => {
   const html = await readFile(new URL('../analytics.html', import.meta.url), 'utf8');
   const headers = [...html.matchAll(/<th scope="col">([^<]+)<\/th>/g)].map(([, label]) => label);
+  assert.match(html, /<option value="7" selected>Last 7 days<\/option>/);
   assert.deepEqual(headers, [
     'Date', 'PDF imports', 'Phone sessions', 'PDF and phone sessions',
     'Phone navigation sessions', 'Completed presentations', 'Presentation time',
@@ -132,6 +133,25 @@ test('a summary response arriving after logout cannot reopen the dashboard or re
     assert.equal(page.elements.get('#login-panel').hidden, false);
     assert.equal(page.elements.get('#totals').children.length, 0);
     assert.equal(page.elements.get('#status').textContent, 'You are signed out.');
+  } finally {
+    page.restore();
+  }
+});
+
+test('login reports service outages separately from a rejected password', async () => {
+  let loginStatus = 504;
+  const page = await bootAnalytics(async (url) => {
+    if (url.startsWith('/api/usage-analytics/summary')) return { ok: false, status: 401 };
+    return { ok: loginStatus === 200, status: loginStatus };
+  });
+
+  try {
+    const submit = page.elements.get('#login-form').listeners.get('submit');
+    await submit({ preventDefault() {} });
+    assert.equal(page.elements.get('#status').textContent, 'Analytics service is unavailable right now. Try again later.');
+    loginStatus = 401;
+    await submit({ preventDefault() {} });
+    assert.equal(page.elements.get('#status').textContent, 'Sign in failed. Check the password and try again.');
   } finally {
     page.restore();
   }
